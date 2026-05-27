@@ -26,7 +26,7 @@ Sistema multi-stack para gestión, aprobación y consulta pública de documentos
 
 | Servicio       | Tecnología              | Puerto (host) | Rol                                        |
 |----------------|-------------------------|---------------|--------------------------------------------|
-| CalidadSYS     | ASP.NET Core 10 MVC     | 5000          | Gestión de documentos, workflows, uploads  |
+| CalidadSYS     | ASP.NET Core 10 MVC     | 5080          | Gestión de documentos, workflows, uploads  |
 | python-service | FastAPI + Python 3.12   | 8001          | Indexación MongoDB, extracción texto, búsqueda full-text |
 | PublicDMS      | PHP 8.3 + Apache        | 80 / 8443     | Portal de consulta pública                 |
 | SQL Server     | SQL Server 2022         | 1434          | Base de datos maestra                      |
@@ -120,7 +120,7 @@ docker compose logs -f
 # Health checks individuales
 curl http://localhost/
 curl http://localhost:8001/health
-curl http://localhost:5000/
+curl http://localhost:5080/
 ```
 
 ## Flujo de datos
@@ -147,8 +147,24 @@ curl http://localhost:5000/
    Usuario busca → PHP llama FastAPI /indexer/search?q=...
    MongoDB full-text search → devuelve postgres_ids
    PHP consulta PostgreSQL con esos ids → muestra resultados
-   Descarga PDF → view_pdf.php → uploads_data (solo lectura)
+   Ver documento → viewer.php (renderizado en browser por tipo)
+   Descargar → view_pdf.php?download=1 → uploads_data (solo lectura)
 ```
+
+## Visor de documentos
+
+`viewer.php` renderiza cualquier archivo directamente en el navegador sin plugins adicionales:
+
+| Formato        | Extensión                        | Método                          |
+|----------------|----------------------------------|---------------------------------|
+| PDF            | .pdf                             | Embed nativo del navegador      |
+| Word           | .docx                            | mammoth.js (CDN) → HTML         |
+| Excel          | .xlsx / .xls                     | SheetJS (CDN) → tabla con tabs  |
+| Imágenes       | .png / .jpg / .jpeg / .gif / .webp | `<img>` directo               |
+| Texto plano    | .txt / .csv / .json / .xml / .md | `<pre>` con fetch               |
+| Sin soporte    | cualquier otro                   | Botón de descarga               |
+
+> Requiere acceso a internet (CDN). En entornos air-gapped, alojar las librerías localmente.
 
 ## Formatos soportados para indexación de contenido
 
