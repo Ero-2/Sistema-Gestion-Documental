@@ -38,7 +38,28 @@ if (!file_exists($realFile)) {
 $download = isset($_GET['download']) && $_GET['download'] === '1';
 $filename = basename($realFile);
 
-header('Content-Type: application/pdf');
+$mimeMap = [
+    'pdf'  => 'application/pdf',
+    'docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'doc'  => 'application/msword',
+    'xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'xls'  => 'application/vnd.ms-excel',
+    'pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'ppt'  => 'application/vnd.ms-powerpoint',
+    'png'  => 'image/png',
+    'jpg'  => 'image/jpeg',
+    'jpeg' => 'image/jpeg',
+    'gif'  => 'image/gif',
+    'webp' => 'image/webp',
+    'txt'  => 'text/plain',
+    'csv'  => 'text/csv',
+    'html' => 'text/html',
+    'htm'  => 'text/html',
+];
+$ext  = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
+$mime = $mimeMap[$ext] ?? 'application/octet-stream';
+
+header('Content-Type: ' . $mime);
 header('Content-Length: ' . filesize($realFile));
 header('Content-Disposition: ' . ($download ? 'attachment' : 'inline') . '; filename="' . rawurlencode($filename) . '"');
 header('X-Content-Type-Options: nosniff');

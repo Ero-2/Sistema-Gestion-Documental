@@ -193,7 +193,7 @@ if (!file_exists($archivo_sync_log) || (time() - (int)file_get_contents($archivo
 
         tableBody.innerHTML = data.map(doc => {
             const hasFile   = doc.file_url && doc.file_url !== '';
-            const viewUrl   = hasFile ? 'view_pdf.php?file='     + encodeURIComponent(doc.file_url) : '#';
+            const viewUrl   = hasFile ? 'viewer.php?file='        + encodeURIComponent(doc.file_url) : '#';
             const dlUrl     = hasFile ? 'view_pdf.php?file='     + encodeURIComponent(doc.file_url) + '&download=1' : '#';
             const disabled  = hasFile ? '' : 'disabled';
 
@@ -208,8 +208,8 @@ if (!file_exists($archivo_sync_log) || (time() - (int)file_get_contents($archivo
                     <td>${doc.department_name}</td>
                     <td class="text-center"><span class="badge bg-info text-dark">v.${doc.version}</span></td>
                     <td class="d-flex gap-1">
-                        <a href="${viewUrl}" target="_blank" class="btn btn-sm btn-outline-danger btn-view ${disabled}">
-                            <i class="bi bi-file-pdf"></i> Abrir
+                        <a href="${viewUrl}" target="_blank" class="btn btn-sm btn-outline-primary btn-view ${disabled}">
+                            <i class="bi bi-eye"></i> Ver
                         </a>
                         <a href="${dlUrl}" class="btn btn-sm btn-outline-secondary ${disabled}" title="Descargar">
                             <i class="bi bi-download"></i>
