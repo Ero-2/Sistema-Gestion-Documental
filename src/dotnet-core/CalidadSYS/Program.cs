@@ -140,7 +140,15 @@ app.MapControllers();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<QualityDMSDbContext>();
-    db.Database.EnsureCreated();
+    for (var attempt = 1; attempt <= 10; attempt++)
+    {
+        try { db.Database.EnsureCreated(); break; }
+        catch (Exception ex) when (attempt < 10)
+        {
+            Console.WriteLine($"[DB] SQL Server not ready (attempt {attempt}/10): {ex.Message}. Retrying in 5s...");
+            Thread.Sleep(5000);
+        }
+    }
 }
 
 app.Run();

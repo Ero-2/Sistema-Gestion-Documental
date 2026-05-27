@@ -104,8 +104,8 @@ Variables requeridas en `.env`:
 |-----------------------|--------------------------------|
 | Portal PublicDMS      | http://localhost               |
 | Portal PublicDMS HTTPS| https://localhost:8443         |
-| CalidadSYS            | http://localhost:5000          |
-| CalidadSYS Swagger    | http://localhost:5000/swagger  |
+| CalidadSYS            | http://localhost:5080          |
+| CalidadSYS Swagger    | http://localhost:5080/swagger  |
 | FastAPI Docs          | http://localhost:8001/docs     |
 
 ## Verificar que todo está correcto

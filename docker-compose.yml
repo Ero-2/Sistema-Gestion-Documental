@@ -152,7 +152,7 @@ services:
       PublicDms__ApiKey: ${FASTAPI_API_KEY}
       PublicDms__PhpSyncUrl: http://php
     ports:
-      - "127.0.0.1:5000:8080"
+      - "127.0.0.1:5080:8080"
     volumes:
       - uploads_data:/app/uploads
     depends_on:
