@@ -52,7 +52,8 @@ Sistema multi-stack para gestión, aprobación y consulta pública de documentos
 │   └── dotnet-core/        ← Dockerfile .NET 10 multi-stage
 ├── docker-compose.yml
 ├── .env.example
-├── setup.ps1               ← Script de setup automatizado (Windows)
+├── install.sh              ← CLI installer (Linux / macOS / WSL) ✨
+├── setup.ps1               ← Script de setup automatizado (Windows PowerShell)
 └── README.md
 ```
 
@@ -62,25 +63,51 @@ Sistema multi-stack para gestión, aprobación y consulta pública de documentos
 - Git
 - 8 GB RAM disponibles para los contenedores
 
-## Configuración inicial
+## Instalación
 
-### Opción A — Setup automático (recomendado)
+### ⚡ Un solo comando (Linux / macOS / WSL)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Ero-2/Sistema-Gestion-Documental/mAIN/install.sh | bash
+```
+
+> El script descarga el repo, pide una contraseña maestra, genera el `.env` y levanta todos los contenedores automáticamente.
+
+---
+
+### Opción A — CLI installer interactivo (recomendado)
+
+Descarga el script y ejecútalo — te guía paso a paso:
+
+```bash
+# Linux / macOS / WSL
+curl -fsSL https://raw.githubusercontent.com/Ero-2/Sistema-Gestion-Documental/mAIN/install.sh -o install.sh
+bash install.sh
+```
 
 ```powershell
-git clone https://github.com/Ero-2/Sistema-Gestion-Documental.git PublicDMS
-cd PublicDMS
-
-# Setup interactivo: genera .env y levanta todo
+# Windows (PowerShell)
+git clone https://github.com/Ero-2/Sistema-Gestion-Documental.git
+cd Sistema-Gestion-Documental
 .\setup.ps1
 ```
 
-El script pide una contraseña maestra (mín. 6 caracteres), genera `.env` automáticamente con API key aleatoria y levanta todos los contenedores. La base de datos SQL Server se inicializa automáticamente al primer arranque.
+El installer interactivo:
+- ✅ Verifica dependencias (git, Docker, docker compose)
+- 📁 Clona el repositorio en el directorio que elijas
+- 🔐 Pide contraseña maestra con confirmación (entrada oculta, mín. 6 chars)
+- 🔑 Genera una API key aleatoria de 64 hex chars
+- 🐳 Construye e inicia todos los contenedores (`docker compose up -d --build`)
+- ⏳ Espera a que SQL Server esté listo (healthcheck automático)
+- 🗺️ Muestra la tabla de URLs y puertos al finalizar
+
+---
 
 ### Opción B — Setup manual
 
-```powershell
-git clone https://github.com/Ero-2/Sistema-Gestion-Documental.git PublicDMS
-cd PublicDMS
+```bash
+git clone https://github.com/Ero-2/Sistema-Gestion-Documental.git
+cd Sistema-Gestion-Documental
 
 cp .env.example .env
 # Editar .env con tus contraseñas
