@@ -12,12 +12,27 @@ function Write-Err  { param($msg) Write-Host "  [X]  $msg" -ForegroundColor Red 
 function Write-Info { param($msg) Write-Host "       $msg" -ForegroundColor Gray }
 
 # -- Banner ---------------------------------------------------
+# Unicode chars defined via code points -- source stays ASCII, PS builds them at runtime
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$b  = [char]0x2588  # full block
+$dr = [char]0x2557  # corner down-right
+$dl = [char]0x2554  # corner down-left
+$v  = [char]0x2551  # vertical
+$h  = [char]0x2550  # horizontal
+$ur = [char]0x255D  # corner up-right
+$ul = [char]0x255A  # corner up-left
+
 Clear-Host
 Write-Host ""
-Write-Host "  =============================================" -ForegroundColor Cyan
-Write-Host "    Sistema Integral de Gestion Documental     " -ForegroundColor White
-Write-Host "    Enterprise Multi-Stack Platform  v1.0.0    " -ForegroundColor DarkGray
-Write-Host "  =============================================" -ForegroundColor Cyan
+Write-Host "  $b$b$b$b$b$b$dr $b$b$b$dr   $b$b$b$dr$b$b$b$b$b$b$b$dr" -ForegroundColor Cyan
+Write-Host "  $b$b$dl$h$h$b$b$dr$b$b$b$b$dr $b$b$b$b$v$b$b$dl$h$h$h$h$ur" -ForegroundColor Cyan
+Write-Host "  $b$b$v  $b$b$v$b$b$dl$b$b$b$b$dl$b$b$v$b$b$b$b$b$b$b$dr" -ForegroundColor Cyan
+Write-Host "  $b$b$v  $b$b$v$b$b$v$ul$b$b$dl$ur$b$b$v$ul$h$h$h$h$b$b$v" -ForegroundColor Cyan
+Write-Host "  $b$b$b$b$b$b$dl$ur$b$b$v $ul$h$ur $b$b$v$b$b$b$b$b$b$b$v" -ForegroundColor Cyan
+Write-Host "  $ul$h$h$h$h$h$ur $ul$h$ur     $ul$h$ur$ul$h$h$h$h$h$h$ur" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "  Sistema Integral de Gestion Documental" -ForegroundColor White
+Write-Host "  Enterprise Multi-Stack Platform  v1.0.0" -ForegroundColor DarkGray
 Write-Host ""
 Write-Host "  Stack: .NET 10 | PHP 8.3 | FastAPI | MongoDB | PostgreSQL | SQL Server | Nginx" -ForegroundColor DarkGray
 Write-Host ""
