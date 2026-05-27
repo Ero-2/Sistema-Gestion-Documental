@@ -1,5 +1,7 @@
 # Sistema Integral de Gestión Documental (DMS)
 
+[![Repo](https://img.shields.io/badge/GitHub-Ero--2%2FSistema--Gestion--Documental-blue?logo=github)](https://github.com/Ero-2/Sistema-Gestion-Documental)
+
 Sistema multi-stack para gestión, aprobación y consulta pública de documentos normativos.
 
 ## Arquitectura
