@@ -80,7 +80,7 @@ public class ApproveStepCommandHandler(
         if (fullyApproved)
         {
             await webhook.NotifyDocumentApprovedAsync(document.DocumentId);
-            await phpSync.TriggerSyncAsync();
+            await phpSync.TriggerSyncAsync(document.DocumentId);
         }
 
         return Result.Success();

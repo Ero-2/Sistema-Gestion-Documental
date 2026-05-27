@@ -1,3 +1,4 @@
+using System.Net.Http.Json;
 using Microsoft.Extensions.Logging;
 using QualityDMS.Domain.Interfaces;
 
@@ -7,16 +8,18 @@ public class PhpSyncService(
     HttpClient httpClient,
     ILogger<PhpSyncService> logger) : IPhpSyncService
 {
-    public async Task TriggerSyncAsync()
+    public async Task TriggerSyncAsync(int documentId)
     {
         try
         {
-            var response = await httpClient.PostAsync("/sync/trigger_sync.php", null);
+            var response = await httpClient.PostAsJsonAsync(
+                "/sync/trigger_sync.php",
+                new { document_id = documentId });
 
             if (!response.IsSuccessStatusCode)
                 logger.LogWarning("PHP sync trigger failed [{Status}]", response.StatusCode);
             else
-                logger.LogInformation("PHP sync triggered successfully");
+                logger.LogInformation("PHP sync triggered for document {DocumentId}", documentId);
         }
         catch (Exception ex)
         {
