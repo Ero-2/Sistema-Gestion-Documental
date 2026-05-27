@@ -78,6 +78,9 @@ _HTML = """<!DOCTYPE html>
 <script>
 let page = 1, total = 0, _debounce;
 
+// Works whether accessed directly (port 8001) or via Nginx (/api/)
+const BASE = window.location.pathname.replace(/\/admin\/viewer.*/, '');
+
 function debounceSearch() { clearTimeout(_debounce); _debounce = setTimeout(() => { page=1; load(); }, 350); }
 
 async function load() {
@@ -87,7 +90,7 @@ async function load() {
   const limit = parseInt(document.getElementById('limit-sel').value);
   const skip  = (page - 1) * limit;
 
-  let url = `/admin/docs?limit=${limit}&skip=${skip}`;
+  let url = `${BASE}/admin/docs?limit=${limit}&skip=${skip}`;
   if (q)    url += `&q=${encodeURIComponent(q)}`;
   if (ext)  url += `&ext=${encodeURIComponent(ext)}`;
   if (extr) url += `&extracted=${encodeURIComponent(extr)}`;
@@ -103,7 +106,7 @@ async function load() {
 }
 
 async function loadStats() {
-  const r = await fetch('/admin/stats');
+  const r = await fetch(`${BASE}/admin/stats`);
   const s = await r.json();
   document.getElementById('s-total').textContent = s.total;
   document.getElementById('s-ok').textContent    = s.extracted;
@@ -173,7 +176,7 @@ function renderPagination(total, limit) {
 }
 
 async function triggerBulkSync() {
-  const r = await fetch('/sync/start', {method:'POST'});
+  const r = await fetch(`${BASE}/sync/start`, {method:'POST'});
   const d = await r.json();
   alert(d.message || 'Sync iniciado');
   setTimeout(load, 2000);
