@@ -21,6 +21,7 @@ app = FastAPI(
     title="DMS Search Engine",
     description="Motor de búsqueda para documentos aprobados",
     version="2.0.0",
+    root_path="/api",
 )
 
 # Expone el campo API Key en el botón Authorize de Swagger UI
