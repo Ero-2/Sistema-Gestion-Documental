@@ -221,13 +221,13 @@ Write-Step "Waiting for services..."
 Write-Info "SQL Server may take up to 90s on first boot."
 Write-Host ""
 
-Wait-Container -DisplayName "SQL Server" -Container "dms_sqlserver" -TimeoutSecs 120 -NeedsHealth $true
-Wait-Container -DisplayName "PostgreSQL"  -Container "dms_postgres"  -TimeoutSecs 60  -NeedsHealth $true
-Wait-Container -DisplayName "MongoDB"     -Container "dms_mongodb"   -TimeoutSecs 60  -NeedsHealth $true
-Wait-Container -DisplayName "FastAPI"     -Container "dms_fastapi"   -TimeoutSecs 60  -NeedsHealth $false
-Wait-Container -DisplayName "PHP/Apache"  -Container "dms_php"       -TimeoutSecs 60  -NeedsHealth $false
-Wait-Container -DisplayName ".NET Core"   -Container "dms_dotnet"    -TimeoutSecs 90  -NeedsHealth $false
-Wait-Container -DisplayName "Nginx"       -Container "dms_nginx"     -TimeoutSecs 30  -NeedsHealth $false
+$null = Wait-Container -DisplayName "SQL Server" -Container "dms_sqlserver" -TimeoutSecs 120 -NeedsHealth $true
+$null = Wait-Container -DisplayName "PostgreSQL"  -Container "dms_postgres"  -TimeoutSecs 60  -NeedsHealth $true
+$null = Wait-Container -DisplayName "MongoDB"     -Container "dms_mongodb"   -TimeoutSecs 60  -NeedsHealth $true
+$null = Wait-Container -DisplayName "FastAPI"     -Container "dms_fastapi"   -TimeoutSecs 60  -NeedsHealth $false
+$null = Wait-Container -DisplayName "PHP/Apache"  -Container "dms_php"       -TimeoutSecs 90  -NeedsHealth $false
+$null = Wait-Container -DisplayName ".NET Core"   -Container "dms_dotnet"    -TimeoutSecs 90  -NeedsHealth $false
+$null = Wait-Container -DisplayName "Nginx"       -Container "dms_nginx"     -TimeoutSecs 30  -NeedsHealth $false
 
 # -- Dashboard final ------------------------------------------
 Write-Host ""
