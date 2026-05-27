@@ -23,7 +23,8 @@ app = FastAPI(
 
 # ── API Key middleware ────────────────────────────────────────────────────────
 _API_KEY    = os.getenv("FASTAPI_API_KEY", "")
-_OPEN_PATHS = {"/", "/docs", "/openapi.json", "/redoc", "/health"}
+_OPEN_PATHS = {"/", "/docs", "/openapi.json", "/redoc", "/health",
+               "/admin/viewer", "/admin/stats", "/admin/docs"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
