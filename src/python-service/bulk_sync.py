@@ -60,49 +60,51 @@ async def _set_last_sync(ts: datetime):
     )
 
 
-async def _index_rows(rows) -> int:
+def _build_payload(row, now: str, file_info: dict,
+                   content: str = "", extraction_error=None) -> dict:
+    created_at = row.CreatedAt.isoformat() if getattr(row, "CreatedAt", None) else None
+    updated_at = row.UpdatedAt.isoformat() if getattr(row, "UpdatedAt", None) else None
+    return {
+        "postgres_id":              str(row.DocumentId),
+        "code":                     row.Code,
+        "title":                    row.Title,
+        "category_name":            row.Category,
+        "department_name":          row.Department,
+        "version":                  str(row.VersionNumber),
+        "file_url":                 row.FilePath.replace("\\", "/").lstrip("/") if row.FilePath else "",
+        "is_active":                bool(row.IsActive),
+        "document_id":              str(row.DocumentId),
+        "created_at":               created_at,
+        "updated_at":               updated_at,
+        "uploaded_by":              "",
+        "metadata": {
+            "department": row.Department,
+            "tags":       [],
+            "version":    str(row.VersionNumber),
+        },
+        **file_info,
+        "content":                  content[:MAX_CONTENT_CHARS],
+        "content_extracted":        extraction_error is None,
+        "content_extraction_error": extraction_error,
+        "sync_date":                now,
+    }
+
+
+async def _index_rows(rows, extract_content: bool = True) -> int:
     count = 0
     now   = datetime.now(timezone.utc).isoformat()
     for row in rows:
-        path = row.FilePath.replace("\\", "/").lstrip("/") if row.FilePath else ""
-
+        path      = row.FilePath.replace("\\", "/").lstrip("/") if row.FilePath else ""
         file_info = get_file_info(path)
-        content, extraction_error = await asyncio.to_thread(extract_text, path)
-        if extraction_error:
-            logger.warning("Extraction [%s]: %s", path, extraction_error)
 
-        created_at = row.CreatedAt.isoformat() if getattr(row, "CreatedAt", None) else None
-        updated_at = row.UpdatedAt.isoformat() if getattr(row, "UpdatedAt", None) else None
+        if extract_content:
+            content, extraction_error = await asyncio.to_thread(extract_text, path)
+            if extraction_error:
+                logger.warning("Extraction [%s]: %s", path, extraction_error)
+        else:
+            content, extraction_error = "", "pending"
 
-        payload = {
-            # backward-compat keys (search & PHP still use these)
-            "postgres_id":      str(row.DocumentId),
-            "code":             row.Code,
-            "title":            row.Title,
-            "category_name":    row.Category,
-            "department_name":  row.Department,
-            "version":          str(row.VersionNumber),
-            "file_url":         path,
-            "is_active":        bool(row.IsActive),
-            # document identity
-            "document_id":      str(row.DocumentId),
-            "created_at":       created_at,
-            "updated_at":       updated_at,
-            "uploaded_by":      "",
-            # structured metadata
-            "metadata": {
-                "department":   row.Department,
-                "tags":         [],
-                "version":      str(row.VersionNumber),
-            },
-            # file info (file_name, extension, mime_type, size, path)
-            **file_info,
-            # extracted content
-            "content":                  content[:MAX_CONTENT_CHARS],
-            "content_extracted":        extraction_error is None,
-            "content_extraction_error": extraction_error,
-            "sync_date":                now,
-        }
+        payload = _build_payload(row, now, file_info, content, extraction_error)
 
         await collection.update_one(
             {"postgres_id": payload["postgres_id"]},
@@ -139,14 +141,24 @@ def _fetch_by_id(document_id: int):
 
 
 async def sync_single_document(document_id: int) -> bool:
-    """Index one document immediately — called by webhook on approval."""
+    """Index one document immediately — called by webhook on approval.
+
+    Two-phase: metadata + file_info first (instant search visibility),
+    then full text extraction (full-text search content).
+    """
     try:
         rows = await asyncio.to_thread(_fetch_by_id, document_id)
         if not rows:
             logger.warning(f"Document {document_id} not found or not approved in SQL Server")
             return False
-        await _index_rows(rows)
-        logger.info(f"Webhook sync: document {document_id} indexed")
+
+        # Phase 1: metadata + file stats → doc visible in search immediately
+        await _index_rows(rows, extract_content=False)
+        logger.info(f"Webhook sync phase 1 done: document {document_id} visible in search")
+
+        # Phase 2: extract file content → full-text search available
+        await _index_rows(rows, extract_content=True)
+        logger.info(f"Webhook sync phase 2 done: document {document_id} fully indexed")
         return True
     except Exception as e:
         logger.error(f"Webhook sync failed for document {document_id}: {e}", exc_info=True)
