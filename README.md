@@ -52,35 +52,64 @@ Sistema multi-stack para gestión, aprobación y consulta pública de documentos
 │   └── dotnet-core/        ← Dockerfile .NET 10 multi-stage
 ├── docker-compose.yml
 ├── .env.example
-├── setup.ps1               ← Script de setup automatizado (Windows)
+├── install.sh              ← Installer Linux/macOS/WSL (recomendado)
+├── setup.ps1               ← Installer Windows PowerShell
+├── scripts/                ← Módulos del installer (colors, spinner, ui, deps…)
 └── README.md
 ```
 
 ## Requisitos
 
-- Docker Desktop 4.x o superior
+- Docker Desktop 4.x o superior (con Docker Compose V2)
 - Git
+- curl, openssl
 - 8 GB RAM disponibles para los contenedores
 
 ## Configuración inicial
 
-### Opción A — Setup automático (recomendado)
+### Opción A — Installer Linux / macOS / WSL (recomendado)
+
+```bash
+git clone https://github.com/Ero-2/Sistema-Gestion-Documental.git
+cd Sistema-Gestion-Documental
+bash install.sh
+```
+
+El installer:
+1. Verifica dependencias (Docker, Compose, Git, curl, openssl)
+2. Pide una **contraseña maestra** que se aplica a PostgreSQL, MongoDB y SQL Server
+3. Genera `.env` automáticamente (API key y JWT secret aleatorios)
+4. Construye y levanta todos los contenedores
+5. Espera que cada servicio esté healthy
+6. Muestra dashboard con URLs y comandos
+
+**Requisito de la contraseña maestra** (política SQL Server):
+- Mínimo 8 caracteres
+- Al menos una mayúscula, una minúscula, un dígito y un carácter especial
+- Ejemplo válido: `MiPass1!`
+
+**Opciones del installer:**
+
+```bash
+bash install.sh --verbose    # muestra output completo de docker build
+bash install.sh --force      # sobreescribe .env existente sin preguntar
+bash install.sh --no-build   # usa imágenes cacheadas (sin rebuild)
+bash install.sh --skip-env   # usa .env existente sin modificarlo
+```
+
+### Opción B — Installer Windows (PowerShell)
 
 ```powershell
-git clone https://github.com/Ero-2/Sistema-Gestion-Documental.git PublicDMS
-cd PublicDMS
-
-# Setup interactivo: genera .env y levanta todo
+git clone https://github.com/Ero-2/Sistema-Gestion-Documental.git
+cd Sistema-Gestion-Documental
 .\setup.ps1
 ```
 
-El script pide una contraseña maestra (mín. 6 caracteres), genera `.env` automáticamente con API key aleatoria y levanta todos los contenedores. La base de datos SQL Server se inicializa automáticamente al primer arranque.
+### Opción C — Setup manual
 
-### Opción B — Setup manual
-
-```powershell
-git clone https://github.com/Ero-2/Sistema-Gestion-Documental.git PublicDMS
-cd PublicDMS
+```bash
+git clone https://github.com/Ero-2/Sistema-Gestion-Documental.git
+cd Sistema-Gestion-Documental
 
 cp .env.example .env
 # Editar .env con tus contraseñas
@@ -90,13 +119,14 @@ docker compose up -d --build
 
 Variables requeridas en `.env`:
 
-| Variable            | Descripción                  | Ejemplo               |
-|---------------------|------------------------------|-----------------------|
-| `MSSQL_SA_PASSWORD` | Contraseña SA de SQL Server  | `MiPass1@`            |
-| `MSSQL_DB`          | Nombre BD SQL Server         | `QualityDMS`          |
-| `POSTGRES_PASSWORD` | Contraseña PostgreSQL        | `mipassword`          |
-| `MONGO_PASSWORD`    | Contraseña MongoDB           | `mipassword`          |
-| `FASTAPI_API_KEY`   | API key para FastAPI         | `clave-secreta-hex`   |
+| Variable            | Descripción                             | Ejemplo             |
+|---------------------|-----------------------------------------|---------------------|
+| `MSSQL_SA_PASSWORD` | Contraseña SA de SQL Server (política)  | `MiPass1!`          |
+| `MSSQL_DB`          | Nombre BD SQL Server                    | `QualityDMS`        |
+| `POSTGRES_PASSWORD` | Contraseña PostgreSQL                   | `MiPass1!`          |
+| `MONGO_PASSWORD`    | Contraseña MongoDB                      | `MiPass1!`          |
+| `FASTAPI_API_KEY`   | API key interna FastAPI (hex 64 chars)  | `openssl rand -hex 32` |
+| `JWT_SECRET`        | JWT secret interno                      | `openssl rand -base64 64` |
 
 ## URLs del sistema
 

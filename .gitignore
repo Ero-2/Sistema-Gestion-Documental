@@ -24,6 +24,11 @@ src/php-app/sync/ultimo_sync.txt
 # Environment
 .env
 
+# Installer runtime output
+logs/
+backups/
+temp/
+
 # OS
 .DS_Store
 Thumbs.db
