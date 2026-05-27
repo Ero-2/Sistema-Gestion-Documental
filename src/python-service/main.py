@@ -3,6 +3,8 @@ import logging
 import os
 
 from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi.openapi.utils import get_openapi
+from fastapi.security import APIKeyHeader
 from pymongo import TEXT
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
@@ -20,6 +22,33 @@ app = FastAPI(
     description="Motor de búsqueda para documentos aprobados",
     version="2.0.0",
 )
+
+# Expone el campo API Key en el botón Authorize de Swagger UI
+_api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    schema.setdefault("components", {}).setdefault("securitySchemes", {})["ApiKeyAuth"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+    }
+    for path in schema.get("paths", {}).values():
+        for op in path.values():
+            op.setdefault("security", [{"ApiKeyAuth": []}])
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = custom_openapi
 
 # ── API Key middleware ────────────────────────────────────────────────────────
 _API_KEY    = os.getenv("FASTAPI_API_KEY", "")
