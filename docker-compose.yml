@@ -237,8 +237,8 @@ services:
       FASTAPI_URL:        http://fastapi:8000
       FASTAPI_API_KEY:    ${FASTAPI_API_KEY}
       DOTNET_API_URL:     http://dotnet:8080
-    expose:
-      - "80"      # interno — nginx lo expone en 443
+    ports:
+      - "127.0.0.1:8082:80"   # acceso directo sin Nginx
     volumes:
       - uploads_data:/var/dms/uploads:ro
     depends_on:
