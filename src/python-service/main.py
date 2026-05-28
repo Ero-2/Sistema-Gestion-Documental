@@ -16,6 +16,7 @@ from routes.admin import router as admin_router
 from routes.documents_sync import router as documents_sync_router
 from routes.metadata_sync import router as metadata_sync_router
 from routes.auth import router as auth_router
+from routes.search import router as search_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,7 +58,8 @@ app.openapi = custom_openapi
 _API_KEY    = os.getenv("FASTAPI_API_KEY", "")
 _OPEN_PATHS = {"/", "/docs", "/openapi.json", "/redoc", "/health",
                "/admin/viewer", "/admin/stats", "/admin/docs",
-               "/sync/start", "/auth/login", "/auth/me", "/api/auth/login"}
+               "/sync/start", "/auth/login", "/auth/me", "/api/auth/login",
+               "/search"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
@@ -85,6 +87,7 @@ app.include_router(admin_router)
 app.include_router(documents_sync_router)
 app.include_router(metadata_sync_router)
 app.include_router(auth_router)
+app.include_router(search_router)
 
 SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "30"))
 

@@ -1,18 +1,11 @@
 <?php
-// Auto-trigger removido. Eventos ahora vienen de .NET vía APIs.
-
 session_start();
-
-// Si autenticado, mostrar panel
-if (isset($_SESSION['user_id'])) {
-    // TODO: Panel de usuario
-    echo "Bienvenido " . htmlspecialchars($_SESSION['user_name']) . "!";
+if (!isset($_SESSION['user_id'])) {
+    header('Location: /login.php');
     exit;
 }
-
-// Si no autenticado, redirigir a login
-header('Location: /login.php');
-exit;
+$userName = htmlspecialchars($_SESSION['user_name'] ?? 'Usuario');
+$userRoles = $_SESSION['roles'] ?? [];
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -54,19 +47,16 @@ exit;
 <!-- Navbar -->
 <nav class="navbar navbar-dark shadow-sm pb-5">
     <div class="container">
-        <a class="navbar-brand fw-bold" href="#">
+        <a class="navbar-brand fw-bold" href="/">
             <i class="bi bi-shield-check text-accent me-2"></i> PUBLIC <span class="text-accent">DMS</span>
         </a>
-        
-        <div class="d-flex align-items-center">
-            <button id="btnSync" class="btn btn-sm btn-outline-light me-3 shadow-sm">
-                <i class="bi bi-arrow-repeat" id="syncIcon"></i> Sincronizar Ahora
-            </button>
-
-            <div class="text-white-50 small">
-                <i class="bi bi-clock-history me-1"></i> 
-                Último Sync: <span id="lastSyncTime"><?php echo file_exists($archivo_sync_log) ? date('H:i', (int)file_get_contents($archivo_sync_log)) : 'Pendiente'; ?></span>
-            </div>
+        <div class="d-flex align-items-center gap-3">
+            <span class="text-white-50 small">
+                <i class="bi bi-person-circle me-1"></i><?= $userName ?>
+            </span>
+            <a href="/api/auth.php?action=logout" class="btn btn-sm btn-outline-light">
+                <i class="bi bi-box-arrow-right"></i> Salir
+            </a>
         </div>
     </div>
 </nav>
@@ -147,23 +137,6 @@ exit;
     document.addEventListener('DOMContentLoaded', () => {
         loadData(1);
         loadReports();
-    });
-
-    // Botón Sincronizar — llama sync directo (incremental = segundos)
-    document.getElementById('btnSync').addEventListener('click', async function() {
-        const btn  = this;
-        const icon = document.getElementById('syncIcon');
-        btn.disabled = true;
-        icon.classList.add('bi-spin');
-
-        try {
-            await fetch('sync/sync_main.php');
-            location.reload();
-        } catch (error) {
-            btn.disabled = false;
-            icon.classList.remove('bi-spin');
-            alert('Error en la sincronización');
-        }
     });
 
     async function loadData(page = 1) {

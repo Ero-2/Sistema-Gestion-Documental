@@ -22,6 +22,14 @@ if (!is_array($input)) {
 
 $action = $_GET['action'] ?? null;
 
+// Logout
+if ($action === 'logout') {
+    session_start();
+    session_destroy();
+    header('Location: /login.php');
+    exit;
+}
+
 if ($action !== 'login') {
     http_response_code(400);
     echo json_encode(['error' => 'Invalid action']);
