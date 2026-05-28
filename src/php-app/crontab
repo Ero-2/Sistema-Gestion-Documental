@@ -1,1 +1,0 @@
-*/5 * * * * www-data php /var/www/html/sync/sync_main.php >> /var/log/dms-sync.log 2>&1

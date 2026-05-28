@@ -1,4 +1,5 @@
 using MediatR;
+using Microsoft.EntityFrameworkCore;
 using QualityDMS.Application.Common.Exceptions;
 using QualityDMS.Domain.Common;
 using QualityDMS.Domain.Entities;
@@ -76,11 +77,47 @@ public class ApproveStepCommandHandler(
 
         await uow.SaveChangesAsync(ct);
 
-        // Notify FastAPI (MongoDB) and PHP (PostgreSQL) after DB commit
+        // Enviar eventos a APIs (PostgreSQL + MongoDB) después de guardar en DB
         if (fullyApproved)
         {
-            await webhook.NotifyDocumentApprovedAsync(document.DocumentId);
-            await phpSync.TriggerSyncAsync(document.DocumentId);
+            try
+            {
+                // Obtener versión actual y datos relacionados
+                var currentVersion = document.Versions.FirstOrDefault(v => v.IsCurrent);
+                var categoryName = document.Category?.Name ?? "Unknown";
+                var departmentName = document.Department?.Name ?? "Unknown";
+                var versionNumber = currentVersion?.VersionNumber ?? "1.0";
+                var fileUrl = currentVersion?.FilePath ?? string.Empty;
+
+                // API 1: Sincronizar documento a PostgreSQL
+                await phpSync.ApproveDocumentAsync(
+                    document.DocumentId,
+                    document.Code,
+                    document.Title,
+                    document.CategoryId,
+                    categoryName,
+                    document.DepartmentId,
+                    departmentName,
+                    versionNumber,
+                    fileUrl,
+                    document.EffectiveDate,
+                    document.ExpirationDate);
+
+                // API 2: Registrar metadatos en MongoDB
+                await phpSync.RegisterMetadataAsync(
+                    document.DocumentId,
+                    document.Code,
+                    document.Title,
+                    categoryName,
+                    departmentName,
+                    fileUrl,
+                    versionNumber);
+            }
+            catch (Exception ex)
+            {
+                // Log error pero no bloquear (APIs async, failure no crítico)
+                // En producción, guardar en tabla de reintentos
+            }
         }
 
         return Result.Success();

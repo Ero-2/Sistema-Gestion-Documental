@@ -1,20 +1,5 @@
 <?php
-/**
- * --- BLOQUE DE AUTO-TRIGGER (SINCRONIZACIÓN AUTOMÁTICA) ---
- * Este bloque ejecuta sync_main.php de forma invisible cada hora.
- */
-$archivo_sync_log = __DIR__ . '/sync/ultimo_sync.txt'; // Archivo donde guardamos el timestamp
-$intervalo_sincronizacion = 3600; // 1 hora en segundos
-
-if (!file_exists($archivo_sync_log) || (time() - (int)file_get_contents($archivo_sync_log) > $intervalo_sincronizacion)) {
-    
-    // Ejecución en segundo plano según el Sistema Operativo
-    if (stristr(PHP_OS, 'WIN')) {
-        pclose(popen("start /B php " . __DIR__ . "/sync/sync_main.php", "r"));
-    } else {
-        shell_exec("php " . __DIR__ . "/sync/sync_main.php > /dev/null 2>&1 &");
-    }
-}
+// Auto-trigger removido. Eventos ahora vienen de .NET vía APIs.
 ?>
 <!DOCTYPE html>
 <html lang="es">

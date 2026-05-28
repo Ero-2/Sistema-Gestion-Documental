@@ -4,7 +4,7 @@ FROM php:8.3-apache
 # Dependencias del sistema
 RUN apt-get update && apt-get install -y \
     curl gnupg2 apt-transport-https \
-    libpq-dev unixodbc-dev cron \
+    libpq-dev unixodbc-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Microsoft ODBC Driver 17 (modern keyring, no apt-key)
@@ -23,10 +23,6 @@ RUN pecl install sqlsrv pdo_sqlsrv \
 
 # Habilitar mod_rewrite
 RUN a2enmod rewrite
-
-# Crontab — sync incremental cada 5 minutos
-COPY docker/php-app/crontab /etc/cron.d/dms-sync
-RUN chmod 0644 /etc/cron.d/dms-sync && crontab /etc/cron.d/dms-sync
 
 # Código de la app
 COPY . /var/www/html/

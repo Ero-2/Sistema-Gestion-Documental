@@ -13,6 +13,8 @@ from bulk_sync import run_bulk_sync_from_sql, run_incremental_sync
 from database import collection
 from routes.indexer import router as indexer_router
 from routes.admin import router as admin_router
+from routes.documents_sync import router as documents_sync_router
+from routes.metadata_sync import router as metadata_sync_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -70,6 +72,8 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 app.add_middleware(APIKeyMiddleware)
 app.include_router(indexer_router)
 app.include_router(admin_router)
+app.include_router(documents_sync_router)
+app.include_router(metadata_sync_router)
 
 SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "30"))
 

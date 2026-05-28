@@ -61,10 +61,13 @@ public static class DependencyInjection
         });
 
         var phpUrl = configuration["PublicDms:PhpSyncUrl"] ?? "http://php";
+        var apiKey = configuration["PublicDms:ApiKey"] ?? "";
         services.AddHttpClient<IPhpSyncService, PhpSyncService>(client =>
         {
             client.BaseAddress = new Uri(phpUrl);
             client.Timeout     = TimeSpan.FromSeconds(5);
+            if (!string.IsNullOrEmpty(apiKey))
+                client.DefaultRequestHeaders.Add("X-API-Key", apiKey);
         });
 
         return services;
