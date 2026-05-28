@@ -1,5 +1,4 @@
 using MediatR;
-using Microsoft.EntityFrameworkCore;
 using QualityDMS.Application.Common.Exceptions;
 using QualityDMS.Domain.Common;
 using QualityDMS.Domain.Entities;

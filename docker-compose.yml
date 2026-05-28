@@ -187,6 +187,8 @@ services:
       SQL_USER:               sa
       SQL_PASSWORD:           ${MSSQL_SA_PASSWORD}
       FASTAPI_API_KEY:        ${FASTAPI_API_KEY}
+      JWT_SECRET:             ${JWT_SECRET}
+      DOTNET_API_URL:         http://dotnet:8080
       SYNC_INTERVAL_SECONDS:  ${SYNC_INTERVAL_SECONDS:-30}
       DMS_STORAGE_PATH:       /app/uploads
     volumes:
@@ -234,6 +236,7 @@ services:
       DMS_STORAGE_PATH:   /var/dms/uploads
       FASTAPI_URL:        http://fastapi:8000
       FASTAPI_API_KEY:    ${FASTAPI_API_KEY}
+      DOTNET_API_URL:     http://dotnet:8080
     expose:
       - "80"      # interno — nginx lo expone en 443
     volumes:

@@ -15,6 +15,7 @@ from routes.indexer import router as indexer_router
 from routes.admin import router as admin_router
 from routes.documents_sync import router as documents_sync_router
 from routes.metadata_sync import router as metadata_sync_router
+from routes.auth import router as auth_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -23,7 +24,6 @@ app = FastAPI(
     title="DMS Search Engine",
     description="Motor de búsqueda para documentos aprobados",
     version="2.0.0",
-    root_path="/api",
 )
 
 # Expone el campo API Key en el botón Authorize de Swagger UI
@@ -57,13 +57,23 @@ app.openapi = custom_openapi
 _API_KEY    = os.getenv("FASTAPI_API_KEY", "")
 _OPEN_PATHS = {"/", "/docs", "/openapi.json", "/redoc", "/health",
                "/admin/viewer", "/admin/stats", "/admin/docs",
-               "/sync/start"}
+               "/sync/start", "/auth/login", "/auth/me"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
-        if not _API_KEY or request.url.path in _OPEN_PATHS:
+        # Check exact paths
+        path = request.url.path
+
+        # Allow open paths
+        if not _API_KEY or path in _OPEN_PATHS:
             return await call_next(request)
+
+        # Allow auth endpoints without API key (handled by individual route)
+        if path.startswith("/auth/"):
+            return await call_next(request)
+
+        # Check API key for other endpoints
         if request.headers.get("X-API-Key", "") != _API_KEY:
             return JSONResponse({"detail": "Invalid or missing API key"}, status_code=401)
         return await call_next(request)
@@ -74,6 +84,7 @@ app.include_router(indexer_router)
 app.include_router(admin_router)
 app.include_router(documents_sync_router)
 app.include_router(metadata_sync_router)
+app.include_router(auth_router)
 
 SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "30"))
 
