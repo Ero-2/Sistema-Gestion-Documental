@@ -144,7 +144,11 @@ async def on_startup():
     asyncio.create_task(_auto_sync_loop())
 
 
-@app.get("/", tags=["General"])
+@app.get("/", tags=["General"], response_class=None)
+async def root():
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/auth/login")
+
 @app.get("/health", tags=["General"])
 async def health_check():
     return {"status": "online", "engine": "FastAPI + MongoDB Text Search"}
