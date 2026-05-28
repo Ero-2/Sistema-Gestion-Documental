@@ -1,5 +1,18 @@
 <?php
 // Auto-trigger removido. Eventos ahora vienen de .NET vía APIs.
+
+session_start();
+
+// Si autenticado, mostrar panel
+if (isset($_SESSION['user_id'])) {
+    // TODO: Panel de usuario
+    echo "Bienvenido " . htmlspecialchars($_SESSION['user_name']) . "!";
+    exit;
+}
+
+// Si no autenticado, redirigir a login
+header('Location: /login.php');
+exit;
 ?>
 <!DOCTYPE html>
 <html lang="es">

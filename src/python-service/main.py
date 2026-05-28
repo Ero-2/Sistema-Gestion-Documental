@@ -57,7 +57,7 @@ app.openapi = custom_openapi
 _API_KEY    = os.getenv("FASTAPI_API_KEY", "")
 _OPEN_PATHS = {"/", "/docs", "/openapi.json", "/redoc", "/health",
                "/admin/viewer", "/admin/stats", "/admin/docs",
-               "/sync/start", "/auth/login", "/auth/me"}
+               "/sync/start", "/auth/login", "/auth/me", "/api/auth/login"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
