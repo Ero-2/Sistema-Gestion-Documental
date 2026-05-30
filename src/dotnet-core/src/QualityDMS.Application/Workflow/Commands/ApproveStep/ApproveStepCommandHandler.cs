@@ -102,15 +102,16 @@ public class ApproveStepCommandHandler(
                     document.EffectiveDate,
                     document.ExpirationDate);
 
-                // API 2: Registrar metadatos en MongoDB
-                await phpSync.RegisterMetadataAsync(
+                // API 2: Indexar metadatos + contenido (full-text) en MongoDB.
+                // Push completo: FastAPI no consulta SQL, lee el archivo del volumen compartido.
+                await webhook.NotifyDocumentApprovedAsync(
                     document.DocumentId,
                     document.Code,
                     document.Title,
                     categoryName,
                     departmentName,
-                    fileUrl,
-                    versionNumber);
+                    versionNumber,
+                    fileUrl);
             }
             catch (Exception ex)
             {

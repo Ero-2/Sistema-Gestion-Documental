@@ -149,6 +149,19 @@ using (var scope = app.Services.CreateScope())
             Thread.Sleep(5000);
         }
     }
+
+    // Datos de prueba: solo en entorno de pruebas (Development).
+    if (app.Environment.IsDevelopment())
+    {
+        try
+        {
+            await DbSeeder.SeedAsync(scope.ServiceProvider);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[DB] Seed falló: {ex.Message}");
+        }
+    }
 }
 
 app.Run();

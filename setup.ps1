@@ -157,9 +157,6 @@ if ($generarEnv) {
     $envContent += "`r`n"
     $envContent += "# -- JWT`r`n"
     $envContent += "JWT_SECRET=" + $JWT_SECRET + "`r`n"
-    $envContent += "`r`n"
-    $envContent += "# -- Sync`r`n"
-    $envContent += "SYNC_INTERVAL_SECONDS=30`r`n"
 
     Set-Content -Path ".env" -Value $envContent -Encoding UTF8
     Write-Host ""

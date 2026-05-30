@@ -1,15 +1,13 @@
-import asyncio
 import logging
 import os
 
-from fastapi import FastAPI, BackgroundTasks, HTTPException
+from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import APIKeyHeader
 from pymongo import TEXT
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
 
-from bulk_sync import run_bulk_sync_from_sql, run_incremental_sync
 from database import collection
 from routes.indexer import router as indexer_router
 from routes.admin import router as admin_router
@@ -58,7 +56,7 @@ app.openapi = custom_openapi
 _API_KEY    = os.getenv("FASTAPI_API_KEY", "")
 _OPEN_PATHS = {"/", "/docs", "/openapi.json", "/redoc", "/health",
                "/admin/viewer", "/admin/stats", "/admin/docs",
-               "/sync/start", "/auth/login", "/auth/me", "/api/auth/login",
+               "/auth/login", "/auth/me", "/api/auth/login",
                "/search"}
 
 
@@ -88,23 +86,6 @@ app.include_router(documents_sync_router)
 app.include_router(metadata_sync_router)
 app.include_router(auth_router)
 app.include_router(search_router)
-
-SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "30"))
-
-
-async def _auto_sync_loop():
-    """Poller autónomo: lee SQL Server cada SYNC_INTERVAL_SECONDS e indexa en MongoDB."""
-    logger.info(f"Auto-sync iniciado — intervalo: {SYNC_INTERVAL_SECONDS}s")
-    await asyncio.sleep(10)  # dar tiempo al startup para terminar
-    while True:
-        try:
-            count = await run_incremental_sync()
-            if count:
-                logger.info(f"Auto-sync: {count} doc(s) indexados")
-        except Exception as e:
-            logger.error(f"Auto-sync error: {e}", exc_info=True)
-        await asyncio.sleep(SYNC_INTERVAL_SECONDS)
-
 
 @app.on_event("startup")
 async def on_startup():
@@ -143,9 +124,6 @@ async def on_startup():
     except Exception as e:
         logger.error(f"Error configurando índices: {e}")
 
-    # Lanzar poller autónomo como background task
-    asyncio.create_task(_auto_sync_loop())
-
 
 @app.get("/", tags=["General"], response_class=None)
 async def root():
@@ -155,17 +133,3 @@ async def root():
 @app.get("/health", tags=["General"])
 async def health_check():
     return {"status": "online", "engine": "FastAPI + MongoDB Text Search"}
-
-
-@app.post("/sync/start", tags=["Sync"])
-async def start_bulk_sync(background_tasks: BackgroundTasks):
-    """Fuerza re-indexación completa de todos los docs aprobados."""
-    try:
-        background_tasks.add_task(run_bulk_sync_from_sql)
-        return {
-            "message": "Bulk sync iniciado en segundo plano",
-            "source":  "SQL Server (QualityDMS)",
-            "target":  "MongoDB (file_tags)",
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))

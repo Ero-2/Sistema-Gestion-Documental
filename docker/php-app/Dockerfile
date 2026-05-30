@@ -1,38 +1,16 @@
-# ── PHP 8.3 + Apache + SQL Server + PostgreSQL drivers ──
 FROM php:8.3-apache
 
-# Dependencias del sistema
+# PHP solo conecta a PostgreSQL. Comunicación desacoplada vía API (.NET → PHP).
+# Sin driver ODBC / sqlsrv: PHP no conecta a SQL Server.
 RUN apt-get update && apt-get install -y \
-    curl gnupg2 apt-transport-https \
-    libpq-dev unixodbc-dev \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Microsoft ODBC Driver 17 (modern keyring, no apt-key)
-RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-    | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
-       > /etc/apt/sources.list.d/mssql-release.list \
-    && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y msodbcsql17 \
-    && rm -rf /var/lib/apt/lists/*
+RUN docker-php-ext-install pdo pdo_pgsql \
+    && docker-php-ext-enable pdo_pgsql
 
-# Extensiones PHP
-RUN pecl install sqlsrv pdo_sqlsrv \
-    && docker-php-ext-install pdo pdo_pgsql \
-    && docker-php-ext-enable sqlsrv pdo_sqlsrv pdo_pgsql
-
-# Habilitar mod_rewrite
 RUN a2enmod rewrite
 
-# Código de la app
 COPY . /var/www/html/
 
-# VirtualHost
-COPY docker/php-app/apache.conf /etc/apache2/sites-available/000-default.conf
-
-# Script de inicio (cron + apache)
-COPY docker/php-app/start.sh /start.sh
-RUN chmod +x /start.sh
-
-EXPOSE 80
-CMD ["/start.sh"]
+CMD ["apache2-foreground"]

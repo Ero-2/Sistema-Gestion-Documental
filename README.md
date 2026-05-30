@@ -4,6 +4,16 @@
 
 Sistema multi-stack para gestión, aprobación y consulta pública de documentos normativos.
 
+## Cambios recientes — Refactor a arquitectura desacoplada por eventos (2026-05)
+
+Migración a comunicación **unidireccional orientada a eventos**. Solo **.NET (CalidadSYS)** conecta a SQL Server; PHP y FastAPI nunca lo consultan: reciben los datos por API y leen los archivos del volumen compartido. **Sin polling, cron ni auto-sync.**
+
+- **Eliminado polling/cron:** borrado `_auto_sync_loop`, `SYNC_INTERVAL_SECONDS`, `bulk_sync.py`, endpoint `/sync/start` y botón "Bulk Sync" del admin.
+- **SQL Server fuera de los servicios secundarios:** FastAPI sin `pyodbc`; PHP sin driver ODBC/`sqlsrv`. Borrados `config/sqlserver.php` y `config/test_sql.php`. Quitados drivers `msodbcsql17`/ODBC de los 4 Dockerfiles y las vars `SQL_*`/`SQLSERVER_*` + `depends_on: sqlserver` de `docker-compose`.
+- **Aprobación = push completo de evento:** al aprobar, .NET hace `POST /indexer/upsert` a FastAPI con metadatos completos (FastAPI extrae texto del archivo, no consulta SQL) y `POST api/events.php` a PHP para PostgreSQL. Reemplaza al antiguo `/indexer/notify` que disparaba un SELECT a SQL.
+- **Seeder de datos de prueba:** `DbSeeder` precarga roles, usuarios (hash PBKDF2 vía `UserManager`), departamentos, categorías, flujo de aprobación y documentos de ejemplo en `Development` (idempotente). Ver `db/sqlserver/README.md`.
+- **Extracción `.doc` legado:** añadido `antiword`/`catdoc` al contenedor FastAPI.
+
 ## Arquitectura
 
 ```
@@ -158,22 +168,25 @@ curl http://localhost:5080/
 ## Flujo de datos
 
 ```
+Arquitectura orientada a eventos, comunicación unidireccional (.NET → PHP, .NET → FastAPI).
+Solo .NET conecta a SQL Server. PHP y FastAPI nunca consultan SQL Server: reciben todos
+los datos por API y leen los archivos del volumen compartido. Sin polling, cron ni auto-sync.
+
 1. Upload y aprobación
    CalidadSYS sube PDF/DOCX/etc → uploads_data (volumen compartido)
    CalidadSYS registra en SQL Server (DocumentVersions.FilePath)
-   Documento aprobado → CalidadSYS dispara dos webhooks en paralelo:
-     → POST http://fastapi:8000/indexer/notify  (indexación inmediata MongoDB)
-     → POST http://php/sync/trigger_sync.php    (sync inmediato PostgreSQL)
+   Documento aprobado → CalidadSYS dispara eventos (push HTTP inmediato):
+     → POST http://fastapi:8000/indexer/upsert        (metadatos + contenido → MongoDB)
+     → POST http://php/api/events.php?action=approve  (documento → PostgreSQL)
 
-2. Indexación (FastAPI — < 2 segundos tras aprobación)
-   Lee documento de SQL Server
-   Extrae texto del archivo (PDF→PyMuPDF, DOCX→python-docx, TXT, XLSX→openpyxl)
+2. Indexación (FastAPI — inmediata tras el evento)
+   Recibe metadatos en el payload (no consulta SQL Server)
+   Lee el archivo del volumen y extrae texto (PDF→PyMuPDF, DOCX→python-docx, XLSX→openpyxl, .doc→antiword)
    Guarda metadatos + contenido en MongoDB
-   Auto-sync cada 30s como respaldo
 
-3. Sincronización PostgreSQL (PHP — < 3 segundos tras aprobación)
-   sync_docs.php lee SQL Server → sincroniza a PostgreSQL
-   Cron cada 5 min como respaldo
+3. Recepción PostgreSQL (PHP — inmediata tras el evento)
+   api/events.php recibe el documento aprobado e inserta/actualiza en PostgreSQL
+   (no consulta SQL Server)
 
 4. Consulta pública
    Usuario busca → PHP llama FastAPI /indexer/search?q=...
@@ -232,7 +245,7 @@ uvicorn main:app --reload --port 8000
 ```
 
 ### PHP (PublicDMS)
-Requiere XAMPP con PHP 8.3, extensiones `pdo_pgsql` y `pdo_sqlsrv`.
+Requiere PHP 8.3 con extensión `pdo_pgsql` (solo PostgreSQL; no usa SQL Server).
 Ajustar `config/storage.php` con la ruta local a los uploads de CalidadSYS.
 
 ### CalidadSYS

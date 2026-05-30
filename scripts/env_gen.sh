@@ -81,9 +81,6 @@ FASTAPI_URL=http://fastapi:8000
 
 # ── JWT / Internal ──────────────────────────────────────
 JWT_SECRET=${jwt_secret}
-
-# ── Sync ────────────────────────────────────────────────
-SYNC_INTERVAL_SECONDS=30
 EOF
 
     log_ok ".env generated"

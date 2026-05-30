@@ -1,24 +1,15 @@
-# ── PHP 8.3 + Apache + SQL Server + PostgreSQL drivers ──
+# ── PHP 8.3 + Apache + PostgreSQL driver ──
+# PHP solo conecta a PostgreSQL. Comunicación desacoplada vía API (.NET → PHP).
+# Sin driver ODBC / sqlsrv: PHP no conecta a SQL Server.
 FROM php:8.3-apache
 
 RUN apt-get update && apt-get install -y \
-    curl gnupg2 apt-transport-https \
-    libpq-dev unixodbc-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Microsoft ODBC Driver 17 (modern keyring, no apt-key)
-RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-    | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
-       > /etc/apt/sources.list.d/mssql-release.list \
-    && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y msodbcsql17 \
+    libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Extensiones PHP
-RUN pecl install sqlsrv pdo_sqlsrv \
-    && docker-php-ext-install pdo pdo_pgsql \
-    && docker-php-ext-enable sqlsrv pdo_sqlsrv pdo_pgsql
+RUN docker-php-ext-install pdo pdo_pgsql \
+    && docker-php-ext-enable pdo_pgsql
 
 RUN a2enmod rewrite
 

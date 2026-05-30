@@ -69,7 +69,6 @@ _HTML = """<!DOCTYPE html>
     <option value="50">50 por página</option>
     <option value="100">100 por página</option>
   </select>
-  <button class="sec" onclick="triggerBulkSync()">⟳ Bulk Sync</button>
   <button class="sec" onclick="load()">↻ Refrescar</button>
 </div>
 <div id="content"><div id="loader">Cargando…</div></div>
@@ -173,13 +172,6 @@ function renderPagination(total, limit) {
   if (page > 1)     html += `<button class="sec" onclick="page--;load()">‹ Anterior</button>`;
   if (page < pages) html += `<button class="sec" onclick="page++;load()">Siguiente ›</button>`;
   document.getElementById('pagination').innerHTML = html;
-}
-
-async function triggerBulkSync() {
-  const r = await fetch(`${BASE}/sync/start`, {method:'POST'});
-  const d = await r.json();
-  alert(d.message || 'Sync iniciado');
-  setTimeout(load, 2000);
 }
 
 load();

@@ -1,8 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query
 
 from database import collection
 from extractor import MAX_CONTENT_CHARS, extract_text, get_file_info
@@ -44,18 +43,6 @@ async def upsert_document(metadata: PublicDMSMetadata):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
-class NotifyPayload(BaseModel):
-    document_id: int
-
-
-@router.post("/notify", status_code=202)
-async def notify_document_approved(payload: NotifyPayload, background_tasks: BackgroundTasks):
-    """Webhook called by CalidadSYS when a document is fully approved."""
-    from bulk_sync import sync_single_document
-    background_tasks.add_task(sync_single_document, payload.document_id)
-    return {"status": "queued", "document_id": payload.document_id}
 
 
 @router.get("/search")

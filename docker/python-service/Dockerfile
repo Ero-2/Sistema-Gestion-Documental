@@ -1,17 +1,9 @@
-# ── FastAPI + MongoDB + SQL Server (ODBC) ──
 FROM python:3.12-slim-bookworm
 
+# FastAPI no conecta a SQL Server (arquitectura desacoplada por eventos).
+# Sin pyodbc / ODBC driver. antiword/catdoc para extraer texto de .doc antiguo.
 RUN apt-get update && apt-get install -y \
-    curl gnupg2 apt-transport-https unixodbc-dev \
-    && rm -rf /var/lib/apt/lists/*
-
-# Microsoft ODBC Driver 17 (modern keyring, no apt-key)
-RUN curl -fsSL https://packages.microsoft.com/keys/microsoft.asc \
-    | gpg --dearmor -o /usr/share/keyrings/microsoft-prod.gpg \
-    && echo "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/debian/12/prod bookworm main" \
-       > /etc/apt/sources.list.d/mssql-release.list \
-    && apt-get update \
-    && ACCEPT_EULA=Y apt-get install -y msodbcsql17 \
+    antiword catdoc \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

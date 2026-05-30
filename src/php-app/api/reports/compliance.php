@@ -22,6 +22,7 @@ try {
     
     $expiring = $pdo->query($expiryQuery)->fetchAll(PDO::FETCH_ASSOC);
 
+    
     echo json_encode([
         "status" => "success",
         "reports" => [

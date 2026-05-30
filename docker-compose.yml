@@ -182,14 +182,9 @@ services:
     environment:
       MONGO_URL:              mongodb://${MONGO_USER:-mongoadmin}:${MONGO_PASSWORD}@mongodb:27017/?authSource=admin
       DATABASE_NAME:          dms_metadata
-      SQL_SERVER:             sqlserver
-      SQL_DATABASE:           ${MSSQL_DB:-QualityDMS}
-      SQL_USER:               sa
-      SQL_PASSWORD:           ${MSSQL_SA_PASSWORD}
       FASTAPI_API_KEY:        ${FASTAPI_API_KEY}
       JWT_SECRET:             ${JWT_SECRET}
       DOTNET_API_URL:         http://dotnet:8080
-      SYNC_INTERVAL_SECONDS:  ${SYNC_INTERVAL_SECONDS:-30}
       DMS_STORAGE_PATH:       /app/uploads
     volumes:
       - uploads_data:/app/uploads:ro
@@ -199,8 +194,6 @@ services:
       - "8000"    # interno — accesible via nginx en /api/
     depends_on:
       mongodb:
-        condition: service_healthy
-      sqlserver:
         condition: service_healthy
     networks:
       - dms_net
@@ -218,7 +211,7 @@ services:
 
   # ──────────────────────────────────────────────────────
   # PHP 8.3 + Apache — Módulo PublicDMS (Consulta Pública)
-  # Incluye cron para sync incremental automático cada 5 min
+  # Sync por eventos (.NET → PHP). Sin polling ni cron.
   # ──────────────────────────────────────────────────────
   php:
     build:
@@ -229,10 +222,6 @@ services:
       POSTGRES_DB:        ${POSTGRES_DB:-PublicDMS}
       POSTGRES_USER:      ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD:  ${POSTGRES_PASSWORD}
-      SQLSERVER_HOST:     sqlserver
-      SQLSERVER_DB:       ${MSSQL_DB:-QualityDMS}
-      SQLSERVER_USER:     sa
-      SQLSERVER_PASSWORD: ${MSSQL_SA_PASSWORD}
       DMS_STORAGE_PATH:   /var/dms/uploads
       FASTAPI_URL:        http://fastapi:8000
       FASTAPI_API_KEY:    ${FASTAPI_API_KEY}
