@@ -1,0 +1,107 @@
+@{
+    ViewData["Title"] = "Búsqueda";
+    var isSuper = (bool)(ViewBag.IsSuperAdmin ?? false);
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <h5 class="mb-0 fw-bold"><i class="bi bi-search me-2 text-primary"></i>Búsqueda en vivo</h5>
+    <span class="badge bg-light text-muted border">API: FastAPI + MongoDB</span>
+</div>
+
+<div class="input-group mb-2">
+    <span class="input-group-text bg-white"><i class="bi bi-search"></i></span>
+    <input id="q" type="text" class="form-control form-control-lg"
+           placeholder="Escribe para buscar… (título, código, categoría, depto o contenido)"
+           autocomplete="off" autofocus />
+    <span class="input-group-text bg-white" id="spin" style="display:none">
+        <span class="spinner-border spinner-border-sm text-primary"></span>
+    </span>
+</div>
+<div class="form-text mb-3">
+    @(isSuper ? "Buscas en TODAS las empresas (SuperAdmin)." : "Resultados acotados a tu empresa.")
+    Coincidencia parcial: «proc» encuentra «Procedimiento». Busca también dentro de PDF/Word/Excel.
+    <span id="count" class="ms-2 text-muted"></span>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0 align-middle">
+            <thead>
+                <tr>
+                    <th>Código</th><th>Título</th>
+                    @if (isSuper) { <th>Empresa</th> }
+                    <th>Clasificación</th><th>Versión</th><th>Estado</th><th>Índice</th>
+                </tr>
+            </thead>
+            <tbody id="rows">
+                <tr><td colspan="@(isSuper ? 7 : 6)" class="text-muted p-3 text-center">Escribe un término para buscar.</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@section Scripts {
+<script>
+    const isSuper = @(isSuper ? "true" : "false");
+    const cols = isSuper ? 7 : 6;
+    const qIn = document.getElementById('q');
+    const rows = document.getElementById('rows');
+    const spin = document.getElementById('spin');
+    const countEl = document.getElementById('count');
+    let timer, lastReqId = 0;
+
+    function esc(s) {
+        return String(s ?? '').replace(/[&<>"']/g, c =>
+            ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function msg(text) {
+        rows.innerHTML = '<tr><td colspan="' + cols + '" class="text-muted p-3 text-center">' + text + '</td></tr>';
+    }
+
+    qIn.addEventListener('input', () => {
+        clearTimeout(timer);
+        const q = qIn.value.trim();
+        if (q.length === 0) { countEl.textContent = ''; msg('Escribe un término para buscar.'); return; }
+        timer = setTimeout(() => run(q), 220);
+    });
+
+    async function run(q) {
+        const reqId = ++lastReqId;
+        spin.style.display = '';
+        try {
+            const res = await fetch('/Search/Api?q=' + encodeURIComponent(q));
+            const data = await res.json();
+            if (reqId !== lastReqId) return; // descarta respuestas viejas
+            render(data, q);
+        } catch (e) {
+            if (reqId === lastReqId) msg('Error de conexión con la API de búsqueda.');
+        } finally {
+            if (reqId === lastReqId) spin.style.display = 'none';
+        }
+    }
+
+    function render(items, q) {
+        countEl.textContent = items.length + ' resultado(s) para «' + q + '»';
+        if (!items.length) { msg('Sin resultados para «' + esc(q) + '».'); return; }
+        rows.innerHTML = items.map(d => {
+            const company = isSuper
+                ? '<td><span class="badge bg-light text-primary border">' + esc(d.company) + '</span></td>' : '';
+            const estado = d.isActive
+                ? '<span class="badge bg-success">vigente</span>'
+                : '<span class="badge bg-secondary">inactivo</span>';
+            const idx = d.indexed
+                ? '<span class="text-success" title="Contenido full-text">◆ texto</span>'
+                : '<span class="text-muted" title="Solo metadatos">◇ meta</span>';
+            return '<tr>'
+                + '<td><span class="badge bg-light text-dark border">' + esc(d.code) + '</span></td>'
+                + '<td class="fw-semibold">' + esc(d.title) + '</td>'
+                + company
+                + '<td class="small text-muted">' + esc(d.category) + ' / ' + esc(d.department) + '</td>'
+                + '<td class="small">' + esc(d.version || '—') + '</td>'
+                + '<td>' + estado + '</td>'
+                + '<td class="small">' + idx + '</td>'
+                + '</tr>';
+        }).join('');
+    }
+</script>
+}

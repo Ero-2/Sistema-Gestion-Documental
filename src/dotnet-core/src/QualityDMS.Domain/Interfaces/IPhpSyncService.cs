@@ -5,7 +5,8 @@ public interface IPhpSyncService
     // Document events → PostgreSQL
     Task ApproveDocumentAsync(int documentId, string code, string title,
         int categoryId, string categoryName, int departmentId, string departmentName,
-        string version, string fileUrl, DateTime? effectiveDate, DateTime? expirationDate);
+        string version, string fileUrl, DateTime? effectiveDate, DateTime? expirationDate,
+        DateTime? approvedAt = null, int companyId = 0, string companyName = "");
 
     Task UpdateDocumentAsync(int documentId, bool isActive,
         DateTime? effectiveDate, DateTime? expirationDate, string reason = null);

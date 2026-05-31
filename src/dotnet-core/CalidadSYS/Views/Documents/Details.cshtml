@@ -11,13 +11,16 @@
         <span class="badge @GetStatusBadge(Model.Status) fs-6">@Model.StatusName</span>
     </div>
     <div class="d-flex gap-2">
-        @if (Model.Status == DocumentStatus.Draft || Model.Status == DocumentStatus.Rejected)
+        @* Solo si hay borrador editable del CICLO ACTUAL (no históricos). Lo decide el dominio. *@
+        @if (Model.HasEditableDraft)
         {
+            var isRevision = Model.Status == DocumentStatus.Approved;
             <form asp-action="Submit" asp-route-id="@Model.DocumentId" method="post" class="d-inline">
                 @Html.AntiForgeryToken()
                 <button type="submit" class="btn btn-sm btn-primary"
-                        onclick="return confirm('¿Enviar este documento a aprobación?')">
-                    <i class="bi bi-send me-1"></i> Enviar a Aprobación
+                        onclick="return confirm('¿Enviar @Model.EditableDraftNumber a aprobación?')">
+                    <i class="bi bi-send me-1"></i>
+                    @(isRevision ? $"Enviar revisión {Model.EditableDraftNumber} a aprobación" : "Enviar a Aprobación")
                 </button>
             </form>
         }
@@ -28,7 +31,16 @@
                 <i class="bi bi-pencil me-1"></i> Editar
             </a>
         }
-        @if ((User.IsInRole("Admin") || User.IsInRole("QualityManager")) && Model.Status != DocumentStatus.Obsolete)
+        @* Documento aprobado: la versión vigente es inmutable; revisar = nuevo borrador X.1. *@
+        @if ((User.IsInRole("Admin") || User.IsInRole("QualityManager") || User.IsInRole("DocumentManager"))
+             && Model.Status == DocumentStatus.Approved)
+        {
+            <a asp-action="Edit" asp-route-id="@Model.DocumentId" class="btn btn-sm btn-primary">
+                <i class="bi bi-file-earmark-plus me-1"></i> Nueva revisión
+            </a>
+        }
+        @* Obsoletar solo tiene sentido sobre un documento APROBADO (con versión vigente). *@
+        @if ((User.IsInRole("Admin") || User.IsInRole("QualityManager")) && Model.Status == DocumentStatus.Approved)
         {
             <form asp-action="Obsolete" asp-route-id="@Model.DocumentId" method="post" class="d-inline">
                 @Html.AntiForgeryToken()
@@ -55,6 +67,8 @@
                         <div class="col-sm-3 text-muted small fw-semibold">Descripción</div>
                         <div class="col-sm-9 small">@Model.Description</div>
                     }
+                    <div class="col-sm-3 text-muted small fw-semibold">Empresa</div>
+                    <div class="col-sm-9 small"><i class="bi bi-buildings me-1 text-primary"></i>@Model.CompanyName</div>
                     <div class="col-sm-3 text-muted small fw-semibold">Categoría</div>
                     <div class="col-sm-9 small">@Model.CategoryName</div>
                     <div class="col-sm-3 text-muted small fw-semibold">Departamento</div>
@@ -86,6 +100,7 @@
                         <thead>
                             <tr>
                                 <th>Versión</th>
+                                <th>Estado</th>
                                 <th>Archivo</th>
                                 <th>Fecha</th>
                                 <th></th>
@@ -97,8 +112,9 @@
                                 <tr class="@(v.IsCurrent ? "table-success" : "")">
                                     <td>
                                         @v.VersionNumber
-                                        @if (v.IsCurrent) { <span class="badge badge-approved ms-1">actual</span> }
+                                        @if (v.IsCurrent) { <span class="badge badge-approved ms-1">vigente</span> }
                                     </td>
+                                    <td><span class="badge @GetVersionBadge(v.Status)">@GetVersionLabel(v)</span></td>
                                     <td class="small text-truncate" style="max-width:120px" title="@v.FileName">
                                         @v.FileName
                                     </td>
@@ -132,5 +148,24 @@
         DocumentStatus.Rejected => "badge-rejected",
         DocumentStatus.Obsolete => "badge-obsolete",
         _ => "badge-draft"
+    };
+
+    string GetVersionBadge(VersionStatus s) => s switch
+    {
+        VersionStatus.Approved => "badge-approved",
+        VersionStatus.PendingApproval => "badge-pending",
+        VersionStatus.Rejected => "badge-rejected",
+        VersionStatus.Obsolete => "badge-obsolete",
+        _ => "badge-draft"
+    };
+
+    string GetVersionLabel(QualityDMS.Application.Documents.DTOs.DocumentVersionDto v) => v.Status switch
+    {
+        VersionStatus.Approved when v.IsCurrent => "Vigente",
+        VersionStatus.Approved => "Aprobada",
+        VersionStatus.PendingApproval => "En revisión",
+        VersionStatus.Rejected => "Rechazada",
+        VersionStatus.Obsolete => "Obsoleta",
+        _ => "Borrador"
     };
 }

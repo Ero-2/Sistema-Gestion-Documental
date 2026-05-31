@@ -25,6 +25,8 @@ class PublicDMSMetadata(BaseModel):
     version: str = "1.0"
     is_active: bool = True
     file_url: str = ""
+    company_id: Optional[int] = None
+    company_name: Optional[str] = None
 
 
 # ── API 1: Documents Events (SQL Server → PostgreSQL) ────────────────────────
@@ -42,6 +44,9 @@ class DocumentApproveEvent(BaseModel):
     file_url: Optional[str] = None
     effective_date: Optional[datetime] = None
     expiration_date: Optional[datetime] = None
+    approved_at: Optional[datetime] = None
+    company_id: Optional[int] = None
+    company_name: Optional[str] = None
 
 
 class DocumentUpdateEvent(BaseModel):

@@ -15,7 +15,9 @@ public class PublicDmsWebhookService(
         string categoryName,
         string departmentName,
         string version,
-        string fileUrl)
+        string fileUrl,
+        int companyId = 0,
+        string companyName = "")
     {
         try
         {
@@ -29,6 +31,8 @@ public class PublicDmsWebhookService(
                 version         = string.IsNullOrEmpty(version) ? "1.0" : version,
                 file_url        = fileUrl ?? "",
                 is_active       = true,
+                company_id      = companyId,
+                company_name    = companyName,
             };
 
             var response = await httpClient.PostAsJsonAsync("/indexer/upsert", payload);

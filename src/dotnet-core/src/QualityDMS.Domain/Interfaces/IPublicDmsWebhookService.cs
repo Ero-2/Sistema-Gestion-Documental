@@ -15,5 +15,7 @@ public interface IPublicDmsWebhookService
         string categoryName,
         string departmentName,
         string version,
-        string fileUrl);
+        string fileUrl,
+        int companyId = 0,
+        string companyName = "");
 }

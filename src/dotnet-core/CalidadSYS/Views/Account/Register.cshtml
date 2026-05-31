@@ -86,6 +86,15 @@
                     </div>
                 </div>
 
+                <!-- Empresa (tenant) -->
+                <div class="mb-3">
+                    <label asp-for="CompanyId" class="form-label fw-semibold small">Empresa</label>
+                    <select asp-for="CompanyId" asp-items="Model.Companies" class="form-select">
+                        <option value="">-- Selecciona empresa --</option>
+                    </select>
+                    <span asp-validation-for="CompanyId" class="text-danger small d-block"></span>
+                </div>
+
                 <!-- Selector de rol -->
                 <div class="mb-3">
                     <label class="form-label fw-semibold small">Tipo de usuario</label>

@@ -17,7 +17,8 @@ public class PhpSyncService(
 
     public async Task ApproveDocumentAsync(int documentId, string code, string title,
         int categoryId, string categoryName, int departmentId, string departmentName,
-        string version, string fileUrl, DateTime? effectiveDate, DateTime? expirationDate)
+        string version, string fileUrl, DateTime? effectiveDate, DateTime? expirationDate,
+        DateTime? approvedAt = null, int companyId = 0, string companyName = "")
     {
         var payload = new
         {
@@ -31,7 +32,10 @@ public class PhpSyncService(
             version = version,
             file_url = fileUrl,
             effective_date = effectiveDate,
-            expiration_date = expirationDate
+            expiration_date = expirationDate,
+            approved_at = approvedAt,
+            company_id = companyId,
+            company_name = companyName
         };
 
         await SendWithRetryAsync("/api/events.php?action=approve", payload,

@@ -1,0 +1,59 @@
+@model List<CalidadSYS.ViewModels.CompanyDocumentViewModel>
+@using QualityDMS.Domain.Enums
+@{
+    var company = ViewBag.Company as QualityDMS.Domain.Entities.Company;
+    ViewData["Title"] = $"Documentos: {company?.Name}";
+}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+    <div>
+        <a asp-action="Index" class="btn btn-sm btn-outline-secondary me-2"><i class="bi bi-arrow-left"></i></a>
+        <span class="fw-bold">@company?.Name</span>
+        <span class="badge bg-light text-dark border ms-1">@company?.Code</span>
+    </div>
+</div>
+
+<div class="card border-0 shadow-sm">
+    <div class="card-body p-0">
+        <table class="table table-sm mb-0 align-middle">
+            <thead>
+                <tr>
+                    <th>Código</th><th>Título</th><th>Versión</th>
+                    <th>Estado</th><th>Categoría</th><th>Departamento</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var d in Model)
+                {
+                    <tr>
+                        <td><span class="badge bg-light text-dark border">@d.Code</span></td>
+                        <td class="fw-semibold">@d.Title</td>
+                        <td>@(d.CurrentVersion ?? "—")</td>
+                        <td><span class="badge @GetBadge(d.Status)">@d.StatusName</span></td>
+                        <td class="small">@d.CategoryName</td>
+                        <td class="small">@d.DepartmentName</td>
+                        <td>
+                            <a asp-controller="Documents" asp-action="Details" asp-route-id="@d.DocumentId"
+                               class="btn btn-xs btn-outline-primary py-0 px-1"><i class="bi bi-eye"></i></a>
+                        </td>
+                    </tr>
+                }
+                @if (!Model.Any())
+                {
+                    <tr><td colspan="7" class="text-muted p-3">Esta empresa no tiene documentos.</td></tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+@functions {
+    string GetBadge(DocumentStatus s) => s switch
+    {
+        DocumentStatus.Approved => "badge-approved",
+        DocumentStatus.PendingApproval => "badge-pending",
+        DocumentStatus.Rejected => "badge-rejected",
+        DocumentStatus.Obsolete => "badge-obsolete",
+        _ => "badge-draft"
+    };
+}

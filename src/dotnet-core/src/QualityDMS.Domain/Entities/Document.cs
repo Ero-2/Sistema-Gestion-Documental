@@ -10,6 +10,7 @@ public class Document : AuditableEntity
     private readonly List<DomainEvent> _domainEvents = new();
 
     public int DocumentId { get; set; }
+    public int CompanyId { get; set; }
     public string Code { get; set; } = string.Empty;
     public string Title { get; set; } = string.Empty;
     public string? Description { get; set; }
@@ -29,6 +30,7 @@ public class Document : AuditableEntity
     public DateTime? NextReviewDate { get; set; }
     public bool IsActive { get; set; } = true;
 
+    public Company Company { get; set; } = null!;
     public DocumentCategory Category { get; set; } = null!;
     public Department Department { get; set; } = null!;
     public WorkflowTemplate? WorkflowTemplate { get; set; }
@@ -37,10 +39,11 @@ public class Document : AuditableEntity
     public ICollection<WorkflowInstance> WorkflowInstances { get; set; } = new List<WorkflowInstance>();
     public ICollection<ControlledDistribution> Distributions { get; set; } = new List<ControlledDistribution>();
 
-    public static Document Create(string code, string title, int categoryId, int departmentId, string createdBy)
+    public static Document Create(string code, string title, int categoryId, int departmentId, string createdBy, int companyId = 0)
     {
         var doc = new Document
         {
+            CompanyId = companyId,
             Code = code,
             Title = title,
             CategoryId = categoryId,
@@ -130,8 +133,9 @@ public class Document : AuditableEntity
     /// <summary>Da de baja el documento: obsoleta la versión vigente (sin reemplazo).</summary>
     public void Obsolete()
     {
-        var current = _versions.FirstOrDefault(v => v.IsCurrent);
-        current?.MakeObsolete();
+        var current = _versions.FirstOrDefault(v => v.IsCurrent && v.Status == VersionStatus.Approved)
+            ?? throw new InvalidOperationException("No hay versión vigente aprobada para obsoletar.");
+        current.MakeObsolete();
         RecalculateStatus();
         _domainEvents.Add(new DocumentObsoletedEvent(this));
     }
@@ -175,12 +179,26 @@ public class Document : AuditableEntity
             .DefaultIfEmpty(0)
             .Max();
 
+    /// <summary>
+    /// Borrador editable del CICLO ACTUAL (major == mayor aprobado). Excluye
+    /// borradores históricos de ciclos anteriores (0.x tras 1.0, o el 1.1 consumido
+    /// tras sellar 2.0) para no re-enviarlos por error a aprobación.
+    /// </summary>
     private DocumentVersion? LatestEditableDraft()
-        => _versions
-            .Where(v => v.Status is VersionStatus.Draft or VersionStatus.Rejected)
-            .OrderByDescending(v => MajorOf(v.VersionNumber))
-            .ThenByDescending(v => MinorOf(v.VersionNumber))
+    {
+        var major = HighestApprovedMajor();
+        return _versions
+            .Where(v => v.Status is VersionStatus.Draft or VersionStatus.Rejected
+                        && MajorOf(v.VersionNumber) == major)
+            .OrderByDescending(v => MinorOf(v.VersionNumber))
             .FirstOrDefault();
+    }
+
+    /// <summary>True si hay un borrador editable en el ciclo actual listo para enviar a aprobación.</summary>
+    public bool HasEditableDraft => LatestEditableDraft() is not null;
+
+    /// <summary>Número del borrador editable del ciclo actual (o null si no hay).</summary>
+    public string? EditableDraftNumber => LatestEditableDraft()?.VersionNumber;
 
     private static int MajorOf(string versionNumber)
         => int.TryParse(versionNumber.Split('.')[0], out var m) ? m : 0;

@@ -17,7 +17,7 @@ public class DepartmentConfiguration : IEntityTypeConfiguration<Department>
         builder.Property(x => x.ManagerName).HasMaxLength(200);
         builder.Property(x => x.CreatedBy).HasMaxLength(450);
 
-        builder.HasIndex(x => x.Code).IsUnique();
+        builder.HasIndex(x => new { x.CompanyId, x.Code }).IsUnique();
 
         builder.HasMany(x => x.Documents)
                .WithOne(x => x.Department)

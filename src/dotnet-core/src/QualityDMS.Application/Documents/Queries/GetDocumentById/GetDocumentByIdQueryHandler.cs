@@ -19,6 +19,8 @@ public class GetDocumentByIdQueryHandler(IDocumentRepository documentRepository)
             Title = doc.Title,
             Description = doc.Description,
             Status = doc.Status,
+            CompanyId = doc.CompanyId,
+            CompanyName = doc.Company?.Name ?? string.Empty,
             CategoryId = doc.CategoryId,
             CategoryName = doc.Category?.Name ?? string.Empty,
             DepartmentId = doc.DepartmentId,
@@ -26,6 +28,8 @@ public class GetDocumentByIdQueryHandler(IDocumentRepository documentRepository)
             WorkflowTemplateId = doc.WorkflowTemplateId,
             EffectiveDate = doc.EffectiveDate,
             ExpirationDate = doc.ExpirationDate,
+            HasEditableDraft = doc.HasEditableDraft,
+            EditableDraftNumber = doc.EditableDraftNumber,
             NextReviewDate = doc.NextReviewDate,
             CreatedAt = doc.CreatedAt,
             CreatedBy = doc.CreatedBy,
@@ -37,6 +41,9 @@ public class GetDocumentByIdQueryHandler(IDocumentRepository documentRepository)
                 FileSizeBytes = v.FileSizeBytes,
                 ChangeLog = v.ChangeLog,
                 IsCurrent = v.IsCurrent,
+                Status = v.Status,
+                ApprovedAt = v.ApprovedAt,
+                ObsoletedAt = v.ObsoletedAt,
                 CreatedAt = v.CreatedAt,
                 CreatedBy = v.CreatedBy
             })

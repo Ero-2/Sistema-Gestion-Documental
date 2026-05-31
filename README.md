@@ -4,6 +4,46 @@
 
 Sistema multi-stack para gestión, aprobación y consulta pública de documentos normativos.
 
+## Cómo funciona la arquitectura hoy (2026-05)
+
+Tres servicios independientes, cada uno con su base de datos, comunicados **solo por API + eventos push unidireccionales** desde .NET. Solo .NET accede a SQL Server (fuente de verdad); PHP y FastAPI reciben los datos por sus propios endpoints. **Sin polling, sin cron de sincronización, sin accesos cruzados a BD.**
+
+```
+                         ┌──────────────────────────────────────────┐
+                         │  .NET (CalidadSYS) + SQL Server           │
+                         │  Fuente de verdad · auth · workflows ·    │
+                         │  versionado · multiempresa                │
+                         └───────────────┬───────────────┬──────────┘
+        push HTTPS + X-API-Key (evento)  │               │  push HTTPS + X-API-Key
+        (documento aprobado X.0)         ▼               ▼  (metadatos + archivo)
+              ┌──────────────────────────────┐   ┌──────────────────────────────┐
+              │  PHP + PostgreSQL             │   │  FastAPI + MongoDB            │
+              │  Portal público · historial   │   │  Indexación full-text ·       │
+              │  de versiones · obsolescencia │   │  API de búsqueda reutilizable │
+              └──────────────────────────────┘   └───────────────▲──────────────┘
+                         │  ambos consumen la misma API de búsqueda │
+                         └──────────────────────────────────────────┘
+```
+
+### Núcleo documental: versionado, vigencia y obsolescencia
+- **Numeración:** borradores `0.1, 0.2…` → primera aprobación `1.0` → borradores de revisión `1.1, 1.2…` → nueva aprobación `2.0` (la `1.0` pasa a **obsoleta**) → `2.1…` → `3.0`, y así.
+- **El estado vive por versión** (`DocumentVersion.Status`: Draft / PendingApproval / Approved / Obsolete / Rejected). `Document.Status` es solo un caché derivado.
+- **Una sola versión vigente por documento**, garantizado por la BD con un **índice único filtrado** (`WHERE IsCurrent = 1`) tanto en SQL Server como en PostgreSQL.
+- **Solo las versiones aprobadas `X.0` se publican** a PHP/Mongo. Los borradores nunca salen de .NET.
+- **El historial se conserva**: las versiones anteriores se marcan obsoletas, no se borran. PostgreSQL guarda el historial en `publicdms.document_versions`.
+
+### Multiempresa (multi-tenant)
+- Entidad `Company`; `CompanyId` en documentos, departamentos, categorías, flujos y usuarios.
+- **Aislamiento automático** por *global query filters* de EF Core: cada usuario solo ve los datos de su empresa.
+- Roles **SuperAdmin** (global, ve y administra todas las empresas vía panel **Empresas**) y **AdminEmpresa** (solo la suya).
+- La empresa viaja en el evento de aprobación → PostgreSQL y MongoDB guardan `company_id`/`company_name`.
+- Códigos únicos **por empresa** (`Code + CompanyId`): dos empresas pueden tener el mismo `POL-001`.
+
+### API de búsqueda reutilizable (FastAPI + MongoDB)
+- Un único endpoint `GET /search/documents` (full-text sobre título, código, categoría, departamento y **contenido** de PDF/Word/Excel) **consumido por .NET y PHP por HTTP**, sin que ninguno toque Mongo directamente.
+- Autenticación dual: **JWT** (usuarios) o **X-API-Key** (módulos servidor).
+- **Búsqueda en vivo** (type-ahead, coincidencia por substring: «proc» encuentra «Procedimiento») y **filtro por empresa**.
+
 ## Cambios recientes — Refactor a arquitectura desacoplada por eventos (2026-05)
 
 Migración a comunicación **unidireccional orientada a eventos**. Solo **.NET (CalidadSYS)** conecta a SQL Server; PHP y FastAPI nunca lo consultan: reciben los datos por API y leen los archivos del volumen compartido. **Sin polling, cron ni auto-sync.**

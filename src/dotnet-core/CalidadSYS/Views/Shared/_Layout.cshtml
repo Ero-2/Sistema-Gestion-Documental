@@ -99,11 +99,22 @@
            asp-controller="Dashboard" asp-action="Index">
             <i class="bi bi-speedometer2"></i> Dashboard
         </a>
+        @if (User.IsInRole("SuperAdmin"))
+        {
+            <a class="nav-link @(ViewContext.RouteData.Values["controller"]?.ToString() == "Companies" ? "active" : "")"
+               asp-controller="Companies" asp-action="Index">
+                <i class="bi bi-buildings"></i> Empresas
+            </a>
+        }
 
         <div class="nav-label">Documentos</div>
         <a class="nav-link @(ViewContext.RouteData.Values["controller"]?.ToString() == "Documents" ? "active" : "")"
            asp-controller="Documents" asp-action="Index">
             <i class="bi bi-file-earmark-text"></i> Documentos
+        </a>
+        <a class="nav-link @(ViewContext.RouteData.Values["controller"]?.ToString() == "Search" ? "active" : "")"
+           asp-controller="Search" asp-action="Index">
+            <i class="bi bi-search"></i> Búsqueda
         </a>
         <a class="nav-link @(ViewContext.RouteData.Values["controller"]?.ToString() == "Approvals" ? "active" : "")"
            asp-controller="Approvals" asp-action="Index">

@@ -24,9 +24,11 @@ async def upsert_document(metadata: PublicDMSMetadata):
             doc_data.update(file_info)
             doc_data["document_id"] = metadata.postgres_id
             doc_data["metadata"] = {
-                "department": metadata.department_name,
-                "tags":       [],
-                "version":    metadata.version,
+                "department":   metadata.department_name,
+                "company_id":   metadata.company_id,
+                "company_name": metadata.company_name,
+                "tags":         [],
+                "version":      metadata.version,
             }
             doc_data["content"]                  = content[:MAX_CONTENT_CHARS]
             doc_data["content_extracted"]        = extraction_error is None

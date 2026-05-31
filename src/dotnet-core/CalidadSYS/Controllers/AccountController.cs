@@ -2,17 +2,28 @@ using CalidadSYS.ViewModels;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Rendering;
+using Microsoft.EntityFrameworkCore;
 using QualityDMS.Infrastructure.Identity;
+using QualityDMS.Infrastructure.Persistence;
 
 namespace CalidadSYS.Controllers;
 
 public class AccountController(
     SignInManager<ApplicationUser> signInManager,
     UserManager<ApplicationUser> userManager,
-    RoleManager<IdentityRole> roleManager) : Controller
+    RoleManager<IdentityRole> roleManager,
+    QualityDMSDbContext db) : Controller
 {
+    // AdminEmpresa puede crearse por registro; SuperAdmin solo por seeding.
     private static readonly string[] AllRoles =
-        ["Admin", "QualityManager", "DocumentManager", "Approver", "Viewer"];
+        ["AdminEmpresa", "Admin", "QualityManager", "DocumentManager", "Approver", "Viewer"];
+
+    private async Task<List<SelectListItem>> CompanyOptionsAsync() =>
+        await db.Companies.Where(c => c.IsActive)
+            .OrderBy(c => c.Name)
+            .Select(c => new SelectListItem { Value = c.CompanyId.ToString(), Text = c.Name })
+            .ToListAsync();
 
     // ── LOGIN ──────────────────────────────────────────────
 
@@ -71,7 +82,11 @@ public class AccountController(
     public async Task<IActionResult> Register()
     {
         await EnsureRolesAsync();
-        return View(new RegisterViewModel { AdminExists = await AdminExists() });
+        return View(new RegisterViewModel
+        {
+            AdminExists = await AdminExists(),
+            Companies = await CompanyOptionsAsync()
+        });
     }
 
     [HttpPost]
@@ -81,12 +96,20 @@ public class AccountController(
     {
         await EnsureRolesAsync();
         vm.AdminExists = await AdminExists();
+        vm.Companies = await CompanyOptionsAsync();
 
         // Bloquea rol Admin si ya existe uno
         if (vm.Role == "Admin" && vm.AdminExists)
         {
             ModelState.AddModelError(nameof(vm.Role),
                 "Ya existe un administrador. Selecciona otro rol.");
+            return View(vm);
+        }
+
+        // Todo usuario registrado pertenece a una empresa (aislamiento multiempresa).
+        if (vm.CompanyId is null)
+        {
+            ModelState.AddModelError(nameof(vm.CompanyId), "Selecciona una empresa.");
             return View(vm);
         }
 
@@ -105,6 +128,7 @@ public class AccountController(
             Email          = vm.Email,
             FirstName      = vm.FirstName.Trim(),
             LastName       = vm.LastName.Trim(),
+            CompanyId      = vm.CompanyId,
             IsActive       = true,
             EmailConfirmed = true
         };

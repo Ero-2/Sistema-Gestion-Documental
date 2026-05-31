@@ -93,13 +93,17 @@ public class DocumentsController(IMediator mediator, QualityDMSDbContext db, IFi
         var doc = await mediator.Send(new GetDocumentByIdQuery(id), ct);
         if (doc is null) return NotFound();
 
-        if (doc.Status == DocumentStatus.Approved || doc.Status == DocumentStatus.Obsolete)
+        // Aprobado = iniciar nueva revisión (borrador X.1); la versión vigente X.0
+        // queda intacta. Obsoleto sí se bloquea (documento dado de baja).
+        if (doc.Status == DocumentStatus.Obsolete)
         {
-            TempData["Error"] = "No se puede editar un documento aprobado u obsoleto.";
+            TempData["Error"] = "No se puede editar un documento obsoleto.";
             return RedirectToAction(nameof(Details), new { id });
         }
 
-        ViewData["Title"] = $"Editar: {doc.Code}";
+        ViewData["Title"] = doc.Status == DocumentStatus.Approved
+            ? $"Nueva revisión: {doc.Code}"
+            : $"Editar: {doc.Code}";
         return View(new EditDocumentViewModel
         {
             DocumentId = doc.DocumentId,

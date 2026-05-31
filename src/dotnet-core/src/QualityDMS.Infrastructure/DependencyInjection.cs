@@ -33,6 +33,7 @@ public static class DependencyInjection
             opts.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
         })
         .AddEntityFrameworkStores<QualityDMSDbContext>()
+        .AddClaimsPrincipalFactory<AppClaimsPrincipalFactory>()
         .AddDefaultTokenProviders();
 
         services.AddSingleton<IDocumentSearchService>(sp =>
@@ -53,6 +54,16 @@ public static class DependencyInjection
         var fastapiUrl = configuration["PublicDms:WebhookUrl"] ?? "http://fastapi:8000";
         var fastapiKey  = configuration["PublicDms:ApiKey"] ?? "";
         services.AddHttpClient<IPublicDmsWebhookService, PublicDmsWebhookService>(client =>
+        {
+            client.BaseAddress = new Uri(fastapiUrl);
+            client.Timeout     = TimeSpan.FromSeconds(5);
+            if (!string.IsNullOrEmpty(fastapiKey))
+                client.DefaultRequestHeaders.Add("X-API-Key", fastapiKey);
+        });
+
+        // API de búsqueda reutilizable (FastAPI + Mongo). .NET la consume por HTTP,
+        // sin acoplarse al driver de Mongo. Misma API que usa PHP.
+        services.AddHttpClient<ISearchApiService, SearchApiService>(client =>
         {
             client.BaseAddress = new Uri(fastapiUrl);
             client.Timeout     = TimeSpan.FromSeconds(5);

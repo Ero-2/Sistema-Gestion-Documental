@@ -32,3 +32,11 @@ temp/
 # OS
 .DS_Store
 Thumbs.db
+
+# IDE / herramientas
+.vs/
+**/.vs/
+.idea/
+.agents/
+.claude/
+skills-lock.json

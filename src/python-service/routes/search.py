@@ -1,4 +1,5 @@
 import os
+import re
 import jwt
 import logging
 from typing import Optional
@@ -13,12 +14,15 @@ router = APIRouter(tags=["Search"])
 
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
+API_KEY = os.getenv("FASTAPI_API_KEY", "")
 
 # Campos expuestos al registro público (lectura). El contenido extraído NO se
 # devuelve completo — solo la bandera de si se indexó.
 _PROJECTION = {
     "_id": 0,
     "postgres_id": 1,
+    "company_id": 1,
+    "company_name": 1,
     "code": 1,
     "title": 1,
     "category_name": 1,
@@ -33,8 +37,14 @@ _PROJECTION = {
 }
 
 
-def _require_user(authorization: Optional[str]) -> dict:
-    """Valida el JWT emitido por /auth/login. Lanza 401 si falta o es inválido."""
+def _authorize(authorization: Optional[str], x_api_key: Optional[str]) -> dict:
+    """
+    API de búsqueda reutilizable: la consumen tanto usuarios (JWT Bearer emitido
+    por /auth/login) como módulos servidor (.NET / PHP) vía X-API-Key. Acepta
+    cualquiera de los dos. 401 si ninguno es válido.
+    """
+    if API_KEY and x_api_key and x_api_key == API_KEY:
+        return {"svc": True}
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Missing or invalid token")
     token = authorization.replace("Bearer ", "", 1)
@@ -49,28 +59,43 @@ def _require_user(authorization: Optional[str]) -> dict:
 @router.get("/search/documents")
 async def list_documents(
     q: Optional[str] = Query(default=None, description="Término de búsqueda (opcional)"),
+    company_id: Optional[int] = Query(default=None, description="Filtrar por empresa (multiempresa)"),
     limit: int = Query(default=200, le=500),
     authorization: Optional[str] = Header(default=None),
+    x_api_key: Optional[str] = Header(default=None),
 ):
     """
-    Registro de documentos indexados.
+    API de búsqueda reutilizable (Mongo full-text), consumible por .NET y PHP.
     Sin `q`: devuelve todos los documentos (orden por sync_date desc).
     Con `q` (>=2): búsqueda full-text (título, código, categoría, depto y contenido).
+    `company_id`: acota a una empresa (aislamiento multiempresa).
     """
-    _require_user(authorization)
+    _authorize(authorization, x_api_key)
+
+    # Filtro base de empresa (aplica con o sin término de búsqueda).
+    base = {}
+    if company_id is not None:
+        base["company_id"] = company_id
 
     term = (q or "").strip()
-    if len(term) >= 2:
-        cursor = (
-            collection.find(
-                {"$text": {"$search": term}},
-                {**_PROJECTION, "score": {"$meta": "textScore"}},
-            )
-            .sort([("score", {"$meta": "textScore"})])
-            .limit(limit)
-        )
+    if term:
+        # Substring case-insensitive (type-ahead): "proc" matchea "Procedimiento".
+        # $text de Mongo solo matchea palabras completas → usamos regex sobre los
+        # campos clave (incluye contenido extraído para buscar dentro de PDF/Word/Excel).
+        rx = {"$regex": re.escape(term), "$options": "i"}
+        flt = {
+            **base,
+            "$or": [
+                {"title": rx},
+                {"code": rx},
+                {"category_name": rx},
+                {"department_name": rx},
+                {"content": rx},
+            ],
+        }
+        cursor = collection.find(flt, _PROJECTION).sort("sync_date", -1).limit(limit)
     else:
-        cursor = collection.find({}, _PROJECTION).sort("sync_date", -1).limit(limit)
+        cursor = collection.find(base, _PROJECTION).sort("sync_date", -1).limit(limit)
 
     docs = await cursor.to_list(length=limit)
     for d in docs:

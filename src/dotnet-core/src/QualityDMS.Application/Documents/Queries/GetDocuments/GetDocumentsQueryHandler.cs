@@ -20,6 +20,8 @@ public class GetDocumentsQueryHandler(IDocumentRepository documentRepository)
             Code = d.Code,
             Title = d.Title,
             Status = d.Status,
+            CompanyId = d.CompanyId,
+            CompanyName = d.Company?.Name ?? string.Empty,
             CategoryName = d.Category?.Name ?? string.Empty,
             DepartmentName = d.Department?.Name ?? string.Empty,
             CurrentVersion = d.Versions.OrderByDescending(v => v.CreatedAt).FirstOrDefault()?.VersionNumber,

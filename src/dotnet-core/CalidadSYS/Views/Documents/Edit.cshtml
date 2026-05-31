@@ -1,6 +1,8 @@
 @model EditDocumentViewModel
+@using QualityDMS.Domain.Enums
 @{
-    ViewData["Title"] = "Editar Documento";
+    var isRevision = Model.CurrentStatus == DocumentStatus.Approved;
+    ViewData["Title"] = isRevision ? "Nueva Revisión" : "Editar Documento";
 }
 
 <div class="row justify-content-center">
@@ -8,11 +10,29 @@
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white py-3">
                 <h6 class="mb-0 fw-bold">
-                    <i class="bi bi-pencil-square me-2 text-warning"></i>
-                    Editar: <span class="text-primary">@Model.Code</span>
+                    @if (isRevision)
+                    {
+                        <i class="bi bi-file-earmark-plus me-2 text-primary"></i>
+                        <text>Nueva revisión: </text><span class="text-primary">@Model.Code</span>
+                    }
+                    else
+                    {
+                        <i class="bi bi-pencil-square me-2 text-warning"></i>
+                        <text>Editar: </text><span class="text-primary">@Model.Code</span>
+                    }
                 </h6>
             </div>
             <div class="card-body">
+                @if (isRevision)
+                {
+                    <div class="alert alert-info py-2 small">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Este documento está <strong>aprobado</strong>. La versión vigente queda
+                        intacta; se crea un <strong>borrador de revisión (X.1)</strong> con el archivo
+                        que adjuntes. Al aprobarlo se sellará la siguiente versión mayor (X.0) y la
+                        vigente actual pasará a obsoleta. Los metadatos no cambian en una revisión.
+                    </div>
+                }
                 <form asp-action="Edit" method="post" enctype="multipart/form-data">
                     <input type="hidden" asp-for="DocumentId" />
                     <input type="hidden" asp-for="Code" />
@@ -56,11 +76,21 @@
 
                         <div class="col-12"><hr class="my-0" /></div>
                         <div class="col-12">
-                            <h6 class="fw-semibold small text-muted text-uppercase">Nueva Versión (opcional)</h6>
+                            <h6 class="fw-semibold small text-muted text-uppercase">
+                                @(isRevision ? "Archivo de la nueva revisión (requerido)" : "Nueva Versión (opcional)")
+                            </h6>
                         </div>
                         <div class="col-md-4">
-                            <label asp-for="NewVersionNumber" class="form-label fw-semibold small"></label>
-                            <input asp-for="NewVersionNumber" class="form-control" placeholder="1.1" />
+                            <label class="form-label fw-semibold small">Número de versión</label>
+                            @if (isRevision)
+                            {
+                                <input class="form-control" value="Automático (X.1)" readonly />
+                                <div class="form-text">El sistema asigna el número de revisión.</div>
+                            }
+                            else
+                            {
+                                <input asp-for="NewVersionNumber" class="form-control" placeholder="1.1" />
+                            }
                         </div>
                         <div class="col-md-8">
                             <label asp-for="ChangeLog" class="form-label fw-semibold small"></label>
@@ -69,8 +99,13 @@
                         <div class="col-12">
                             <label asp-for="File" class="form-label fw-semibold small"></label>
                             <input asp-for="File" class="form-control" type="file"
-                                   accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx" />
-                            <div class="form-text">Deja vacío para mantener el archivo actual.</div>
+                                   accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx"
+                                   required="@(isRevision ? "required" : null)" />
+                            <div class="form-text">
+                                @(isRevision
+                                    ? "Adjunta el archivo de la nueva revisión (obligatorio)."
+                                    : "Deja vacío para mantener el archivo actual.")
+                            </div>
                         </div>
                     </div>
 

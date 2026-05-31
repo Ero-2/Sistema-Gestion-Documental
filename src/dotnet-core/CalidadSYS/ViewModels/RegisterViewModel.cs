@@ -1,4 +1,5 @@
 using System.ComponentModel.DataAnnotations;
+using Microsoft.AspNetCore.Mvc.Rendering;
 
 namespace CalidadSYS.ViewModels;
 
@@ -35,5 +36,9 @@ public class RegisterViewModel
     [Display(Name = "Tipo de usuario")]
     public string Role { get; set; } = "Viewer";
 
+    [Display(Name = "Empresa")]
+    public int? CompanyId { get; set; }
+
     public bool AdminExists { get; set; }
+    public IEnumerable<SelectListItem> Companies { get; set; } = [];
 }

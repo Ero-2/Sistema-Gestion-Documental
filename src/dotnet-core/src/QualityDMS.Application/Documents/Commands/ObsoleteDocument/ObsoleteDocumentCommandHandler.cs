@@ -15,6 +15,10 @@ public class ObsoleteDocumentCommandHandler(
         var document = await documentRepository.GetByIdWithVersionsAsync(cmd.DocumentId, ct)
             ?? throw new NotFoundException(nameof(Document), cmd.DocumentId);
 
+        // Solo un documento con versión vigente aprobada puede obsoletarse (sin reemplazo).
+        if (document.CurrentApprovedVersion() is null)
+            return Result.Failure("Solo se puede obsoletar un documento con una versión vigente aprobada.");
+
         document.Obsolete();
         documentRepository.Update(document);
         await uow.SaveChangesAsync(ct);

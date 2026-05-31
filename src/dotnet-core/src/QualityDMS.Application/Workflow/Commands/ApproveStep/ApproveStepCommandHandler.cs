@@ -88,10 +88,11 @@ public class ApproveStepCommandHandler(
                 // se publican a PHP/Mongo (los borradores X.Y nunca salen de .NET).
                 var categoryName = document.Category?.Name ?? "Unknown";
                 var departmentName = document.Department?.Name ?? "Unknown";
+                var companyName = document.Company?.Name ?? "Unknown";
                 var versionNumber = approvedVersion?.VersionNumber ?? "1.0";
                 var fileUrl = approvedVersion?.FilePath ?? string.Empty;
 
-                // API 1: Sincronizar documento a PostgreSQL
+                // API 1: Sincronizar documento a PostgreSQL (con empresa = aislamiento multiempresa)
                 await phpSync.ApproveDocumentAsync(
                     document.DocumentId,
                     document.Code,
@@ -103,7 +104,10 @@ public class ApproveStepCommandHandler(
                     versionNumber,
                     fileUrl,
                     document.EffectiveDate,
-                    document.ExpirationDate);
+                    document.ExpirationDate,
+                    approvedVersion?.ApprovedAt,
+                    document.CompanyId,
+                    companyName);
 
                 // API 2: Indexar metadatos + contenido (full-text) en MongoDB.
                 // Push completo: FastAPI no consulta SQL, lee el archivo del volumen compartido.
@@ -114,7 +118,9 @@ public class ApproveStepCommandHandler(
                     categoryName,
                     departmentName,
                     versionNumber,
-                    fileUrl);
+                    fileUrl,
+                    document.CompanyId,
+                    companyName);
             }
             catch (Exception ex)
             {

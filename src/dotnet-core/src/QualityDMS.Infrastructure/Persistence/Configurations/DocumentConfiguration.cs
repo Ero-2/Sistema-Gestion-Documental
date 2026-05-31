@@ -21,7 +21,7 @@ public class DocumentConfiguration : IEntityTypeConfiguration<Document>
         builder.Property(x => x.CreatedBy).HasMaxLength(450);
         builder.Property(x => x.UpdatedBy).HasMaxLength(450);
 
-        builder.HasIndex(x => x.Code).IsUnique();
+        builder.HasIndex(x => new { x.CompanyId, x.Code }).IsUnique();
         builder.HasIndex(x => x.NextReviewDate);
         builder.HasIndex(x => x.CategoryId);
 

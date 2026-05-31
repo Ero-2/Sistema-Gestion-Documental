@@ -20,6 +20,7 @@ public class DocumentRepository(
 
     public async Task<Document?> GetByIdWithVersionsAsync(int id, CancellationToken ct = default)
         => await ctx.Documents
+            .Include(d => d.Company)
             .Include(d => d.Category)
             .Include(d => d.Department)
             .Include(d => d.Versions)
@@ -39,6 +40,7 @@ public class DocumentRepository(
     {
         var query = ctx.Documents
             .AsNoTracking()
+            .Include(d => d.Company)
             .Include(d => d.Category)
             .Include(d => d.Department)
             .Include(d => d.Versions)

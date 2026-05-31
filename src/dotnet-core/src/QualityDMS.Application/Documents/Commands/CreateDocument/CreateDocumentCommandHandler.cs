@@ -19,7 +19,9 @@ public class CreateDocumentCommandHandler(
         var (filePath, sizeBytes) = await fileStorage.UploadAsync(
             cmd.FileStream, cmd.FileName, cmd.ContentType, ct);
 
-        var document = Document.Create(cmd.Code, cmd.Title, cmd.CategoryId, cmd.DepartmentId, currentUser.UserId);
+        // El documento hereda la empresa del autor (aislamiento multiempresa).
+        var companyId = currentUser.CompanyId ?? 0;
+        var document = Document.Create(cmd.Code, cmd.Title, cmd.CategoryId, cmd.DepartmentId, currentUser.UserId, companyId);
         document.Description = cmd.Description;
         document.WorkflowTemplateId = cmd.WorkflowTemplateId;
         document.NextReviewDate = cmd.NextReviewDate;

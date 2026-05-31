@@ -31,55 +31,108 @@ class DocumentEventHandler
     {
         $this->validateApproveData($data);
 
-        // Sembrar categoría y departamento referenciados (vienen del evento .NET).
-        // Postgres es un modelo de lectura desacoplado: no consulta SQL Server, así que
-        // las tablas de catálogo se pueblan vía el mismo push de aprobación (upsert por id).
-        $this->upsertCatalog('categories', $data['category_id'], $data['category_name']);
-        $this->upsertCatalog('departments', $data['department_id'], $data['department_name']);
+        // Toda la aprobación es atómica: puntero vigente + historial + obsolescencia
+        // de la versión anterior viajan juntos. Así el índice único filtrado
+        // ux_docver_one_current nunca ve dos vigentes a la vez.
+        $this->pdo->beginTransaction();
+        try {
+            // Sembrar categoría y departamento referenciados (vienen del evento .NET).
+            // Postgres es un modelo de lectura desacoplado: no consulta SQL Server, así que
+            // las tablas de catálogo se pueblan vía el mismo push de aprobación (upsert por id).
+            $this->upsertCatalog('categories', $data['category_id'], $data['category_name']);
+            $this->upsertCatalog('departments', $data['department_id'], $data['department_name']);
 
-        $query = <<<SQL
-            INSERT INTO publicdms.documents (
-                id, code, title, category_id, category_name,
-                department_id, department_name, version,
-                file_url, is_active, effective_date, expiration_date, last_sync
-            ) VALUES (
-                :id, :code, :title, :cat_id, :cat_name,
-                :dep_id, :dep_name, :version,
-                :url, :is_active, :eff_date, :exp_date, NOW()
-            )
-            ON CONFLICT (id) DO UPDATE SET
-                code = EXCLUDED.code,
-                title = EXCLUDED.title,
-                category_name = EXCLUDED.category_name,
-                department_name = EXCLUDED.department_name,
-                version = EXCLUDED.version,
-                file_url = EXCLUDED.file_url,
-                effective_date = EXCLUDED.effective_date,
-                expiration_date = EXCLUDED.expiration_date,
-                last_sync = NOW();
-        SQL;
+            // 1) Puntero a la versión vigente (lo que ve el público). 1 fila por documento.
+            $query = <<<SQL
+                INSERT INTO publicdms.documents (
+                    id, company_id, company_name, code, title, category_id, category_name,
+                    department_id, department_name, version,
+                    file_url, is_active, effective_date, expiration_date, last_sync
+                ) VALUES (
+                    :id, :company_id, :company_name, :code, :title, :cat_id, :cat_name,
+                    :dep_id, :dep_name, :version,
+                    :url, :is_active, :eff_date, :exp_date, NOW()
+                )
+                ON CONFLICT (id) DO UPDATE SET
+                    company_id = EXCLUDED.company_id,
+                    company_name = EXCLUDED.company_name,
+                    code = EXCLUDED.code,
+                    title = EXCLUDED.title,
+                    category_name = EXCLUDED.category_name,
+                    department_name = EXCLUDED.department_name,
+                    version = EXCLUDED.version,
+                    file_url = EXCLUDED.file_url,
+                    is_active = TRUE,
+                    effective_date = EXCLUDED.effective_date,
+                    expiration_date = EXCLUDED.expiration_date,
+                    last_sync = NOW();
+            SQL;
 
-        $stmt = $this->pdo->prepare($query);
-        $stmt->execute([
-            ':id'       => $data['document_id'],
-            ':code'     => $data['code'],
-            ':title'    => $data['title'],
-            ':cat_id'   => $data['category_id'],
-            ':cat_name' => $data['category_name'],
-            ':dep_id'   => $data['department_id'],
-            ':dep_name' => $data['department_name'],
-            ':version'  => $data['version'],
-            ':url'      => $data['file_url'] ?? null,
-            ':is_active' => true,
-            ':eff_date' => $data['effective_date'] ?? null,
-            ':exp_date' => $data['expiration_date'] ?? null,
-        ]);
+            $stmt = $this->pdo->prepare($query);
+            $stmt->execute([
+                ':id'          => $data['document_id'],
+                ':company_id'  => $data['company_id'] ?? null,
+                ':company_name'=> $data['company_name'] ?? null,
+                ':code'        => $data['code'],
+                ':title'       => $data['title'],
+                ':cat_id'      => $data['category_id'],
+                ':cat_name'    => $data['category_name'],
+                ':dep_id'      => $data['department_id'],
+                ':dep_name'    => $data['department_name'],
+                ':version'     => $data['version'],
+                ':url'         => $data['file_url'] ?? null,
+                ':is_active'   => true,
+                ':eff_date'    => $data['effective_date'] ?? null,
+                ':exp_date'    => $data['expiration_date'] ?? null,
+            ]);
 
-        $this->logEvent($data['document_id'], 'approved');
+            // 2) Obsoletar la vigente anterior (toda versión distinta a la entrante).
+            //    Debe ir ANTES del insert de la nueva para no chocar con el índice filtrado.
+            $obs = $this->pdo->prepare(<<<SQL
+                UPDATE publicdms.document_versions
+                SET is_current = FALSE, obsoleted_at = NOW()
+                WHERE document_id = :id AND is_current = TRUE AND version <> :version;
+            SQL);
+            $obs->execute([':id' => $data['document_id'], ':version' => $data['version']]);
+
+            // 3) Registrar la nueva versión aprobada como vigente (append-only; idempotente).
+            $ver = $this->pdo->prepare(<<<SQL
+                INSERT INTO publicdms.document_versions (
+                    document_id, version, file_url, is_current,
+                    approved_at, obsoleted_at, effective_date, expiration_date
+                ) VALUES (
+                    :id, :version, :url, TRUE,
+                    COALESCE(:approved_at, NOW()), NULL, :eff_date, :exp_date
+                )
+                ON CONFLICT (document_id, version) DO UPDATE SET
+                    file_url        = EXCLUDED.file_url,
+                    is_current      = TRUE,
+                    obsoleted_at    = NULL,
+                    approved_at     = EXCLUDED.approved_at,
+                    effective_date  = EXCLUDED.effective_date,
+                    expiration_date = EXCLUDED.expiration_date;
+            SQL);
+            $ver->execute([
+                ':id'          => $data['document_id'],
+                ':version'     => $data['version'],
+                ':url'         => $data['file_url'] ?? null,
+                ':approved_at' => $data['approved_at'] ?? null,
+                ':eff_date'    => $data['effective_date'] ?? null,
+                ':exp_date'    => $data['expiration_date'] ?? null,
+            ]);
+
+            $this->logEvent($data['document_id'], "approved_{$data['version']}");
+
+            $this->pdo->commit();
+        } catch (Exception $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
 
         return [
             'status'      => 'success',
             'document_id' => $data['document_id'],
+            'version'     => $data['version'],
             'action'      => 'approved',
         ];
     }
@@ -165,16 +218,31 @@ class DocumentEventHandler
     {
         $this->validateObsoleteData($data);
 
-        $query = <<<SQL
-            UPDATE publicdms.documents
-            SET is_active = FALSE, last_sync = NOW()
-            WHERE id = :id;
-        SQL;
+        // Retiro total del documento (sin reemplazo): el puntero deja de ser vigente
+        // y la versión aprobada actual queda obsoleta. El historial se conserva.
+        $this->pdo->beginTransaction();
+        try {
+            $stmt = $this->pdo->prepare(<<<SQL
+                UPDATE publicdms.documents
+                SET is_active = FALSE, last_sync = NOW()
+                WHERE id = :id;
+            SQL);
+            $stmt->execute([':id' => $data['document_id']]);
 
-        $stmt = $this->pdo->prepare($query);
-        $stmt->execute([':id' => $data['document_id']]);
+            $verObs = $this->pdo->prepare(<<<SQL
+                UPDATE publicdms.document_versions
+                SET is_current = FALSE, obsoleted_at = NOW()
+                WHERE document_id = :id AND is_current = TRUE;
+            SQL);
+            $verObs->execute([':id' => $data['document_id']]);
 
-        $this->logEvent($data['document_id'], 'obsoleted');
+            $this->logEvent($data['document_id'], 'obsoleted');
+
+            $this->pdo->commit();
+        } catch (Exception $e) {
+            $this->pdo->rollBack();
+            throw $e;
+        }
 
         return [
             'status'      => 'success',

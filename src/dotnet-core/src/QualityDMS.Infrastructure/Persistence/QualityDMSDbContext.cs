@@ -1,14 +1,21 @@
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using QualityDMS.Domain.Entities;
+using QualityDMS.Domain.Interfaces;
 using QualityDMS.Infrastructure.Identity;
 using System.Reflection;
 
 namespace QualityDMS.Infrastructure.Persistence;
 
-public class QualityDMSDbContext(DbContextOptions<QualityDMSDbContext> options)
+public class QualityDMSDbContext(DbContextOptions<QualityDMSDbContext> options, ICurrentUserService currentUser)
     : IdentityDbContext<ApplicationUser>(options)
 {
+    // Aislamiento multiempresa: cuando hay tenant, las consultas se acotan a su CompanyId.
+    // SuperAdmin (o contexto sin usuario: seeding/jobs) ve todas las empresas.
+    private bool TenantBypass => currentUser.IsSuperAdmin || currentUser.CompanyId is null;
+    private int CurrentCompanyId => currentUser.CompanyId ?? 0;
+
+    public DbSet<Company> Companies => Set<Company>();
     public DbSet<Document> Documents => Set<Document>();
     public DbSet<DocumentVersion> DocumentVersions => Set<DocumentVersion>();
     public DbSet<DocumentCategory> DocumentCategories => Set<DocumentCategory>();
@@ -30,6 +37,13 @@ public class QualityDMSDbContext(DbContextOptions<QualityDMSDbContext> options)
 
         builder.Entity<ApplicationUser>()
             .Ignore(u => u.FullName);
+
+        // Filtros globales de empresa (tenant). Referencian campos de instancia →
+        // EF los reevalúa por consulta. Bypass para SuperAdmin / contexto sin usuario.
+        builder.Entity<Document>().HasQueryFilter(e => TenantBypass || e.CompanyId == CurrentCompanyId);
+        builder.Entity<Department>().HasQueryFilter(e => TenantBypass || e.CompanyId == CurrentCompanyId);
+        builder.Entity<DocumentCategory>().HasQueryFilter(e => TenantBypass || e.CompanyId == CurrentCompanyId);
+        builder.Entity<WorkflowTemplate>().HasQueryFilter(e => TenantBypass || e.CompanyId == CurrentCompanyId);
     }
 
     public override Task<int> SaveChangesAsync(CancellationToken cancellationToken = default)

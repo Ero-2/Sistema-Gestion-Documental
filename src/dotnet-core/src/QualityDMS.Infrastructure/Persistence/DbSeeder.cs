@@ -19,6 +19,8 @@ namespace QualityDMS.Infrastructure.Persistence;
 public static class DbSeeder
 {
     // Roles del sistema.
+    public const string RoleSuperAdmin     = "SuperAdmin";     // global, ve todas las empresas
+    public const string RoleCompanyAdmin   = "AdminEmpresa";   // administra solo su empresa
     public const string RoleAdmin          = "Admin";
     public const string RoleQualityManager = "QualityManager";
     public const string RoleApprover       = "Approver";
@@ -40,19 +42,38 @@ public static class DbSeeder
         var userManager = services.GetRequiredService<UserManager<ApplicationUser>>();
 
         await SeedRolesAsync(roleManager, logger);
-        var depts    = await SeedDepartmentsAsync(db, logger);
-        await SeedUsersAsync(userManager, depts, logger);
-        var cats     = await SeedCategoriesAsync(db, logger);
-        var template = await SeedWorkflowAsync(db, logger);
-        await SeedDocumentsAsync(db, userManager, depts, cats, template, logger);
+        var companies = await SeedCompaniesAsync(db, logger);
+        var acme = companies["ACME"];
+        var beta = companies["BETA"];
+        var depts    = await SeedDepartmentsAsync(db, acme, logger);
+        await SeedUsersAsync(userManager, acme, beta, depts, logger);
+        var cats     = await SeedCategoriesAsync(db, acme, logger);
+        var template = await SeedWorkflowAsync(db, acme, logger);
+        await SeedDocumentsAsync(db, userManager, acme, depts, cats, template, logger);
 
         logger.LogInformation("DbSeeder: datos de prueba listos.");
+    }
+
+    // ── Empresas (tenants) ───────────────────────────────────────────────────
+    private static async Task<Dictionary<string, int>> SeedCompaniesAsync(
+        QualityDMSDbContext db, ILogger logger)
+    {
+        if (!await db.Companies.AnyAsync())
+        {
+            db.Companies.AddRange(
+                new Company { Code = "ACME", Name = "ACME Corporation",  TaxId = "ACME-900100", CreatedBy = SeedBy },
+                new Company { Code = "BETA", Name = "Beta Industries",    TaxId = "BETA-900200", CreatedBy = SeedBy }
+            );
+            await db.SaveChangesAsync();
+            logger.LogInformation("DbSeeder: empresas sembradas (ACME, BETA)");
+        }
+        return await db.Companies.ToDictionaryAsync(c => c.Code, c => c.CompanyId);
     }
 
     // ── Roles ──────────────────────────────────────────────────────────────
     private static async Task SeedRolesAsync(RoleManager<IdentityRole> roleManager, ILogger logger)
     {
-        string[] roles = [RoleAdmin, RoleQualityManager, RoleApprover, RoleAuthor, RoleViewer];
+        string[] roles = [RoleSuperAdmin, RoleCompanyAdmin, RoleAdmin, RoleQualityManager, RoleApprover, RoleAuthor, RoleViewer];
         foreach (var role in roles)
         {
             if (!await roleManager.RoleExistsAsync(role))
@@ -65,38 +86,44 @@ public static class DbSeeder
 
     // ── Departamentos ───────────────────────────────────────────────────────
     private static async Task<Dictionary<string, int>> SeedDepartmentsAsync(
-        QualityDMSDbContext db, ILogger logger)
+        QualityDMSDbContext db, int companyId, ILogger logger)
     {
-        if (!await db.Departments.AnyAsync())
+        if (!await db.Departments.AnyAsync(d => d.CompanyId == companyId))
         {
             db.Departments.AddRange(
-                new Department { Code = "CAL",  Name = "Calidad",          Description = "Gestión de calidad y mejora continua", ManagerName = "Gerente de Calidad", CreatedBy = SeedBy },
-                new Department { Code = "OPE",  Name = "Operaciones",      Description = "Operación y producción",                CreatedBy = SeedBy },
-                new Department { Code = "RRHH", Name = "Recursos Humanos", Description = "Gestión del personal",                  CreatedBy = SeedBy },
-                new Department { Code = "TI",   Name = "Tecnología",       Description = "Sistemas e infraestructura",            CreatedBy = SeedBy }
+                new Department { CompanyId = companyId, Code = "CAL",  Name = "Calidad",          Description = "Gestión de calidad y mejora continua", ManagerName = "Gerente de Calidad", CreatedBy = SeedBy },
+                new Department { CompanyId = companyId, Code = "OPE",  Name = "Operaciones",      Description = "Operación y producción",                CreatedBy = SeedBy },
+                new Department { CompanyId = companyId, Code = "RRHH", Name = "Recursos Humanos", Description = "Gestión del personal",                  CreatedBy = SeedBy },
+                new Department { CompanyId = companyId, Code = "TI",   Name = "Tecnología",       Description = "Sistemas e infraestructura",            CreatedBy = SeedBy }
             );
             await db.SaveChangesAsync();
             logger.LogInformation("DbSeeder: departamentos sembrados");
         }
 
-        return await db.Departments.ToDictionaryAsync(d => d.Name, d => d.DepartmentId);
+        return await db.Departments.Where(d => d.CompanyId == companyId)
+                                    .ToDictionaryAsync(d => d.Name, d => d.DepartmentId);
     }
 
     // ── Usuarios ────────────────────────────────────────────────────────────
     private static async Task SeedUsersAsync(
-        UserManager<ApplicationUser> userManager, Dictionary<string, int> depts, ILogger logger)
+        UserManager<ApplicationUser> userManager, int acmeId, int betaId,
+        Dictionary<string, int> depts, ILogger logger)
     {
-        (string Email, string First, string Last, string Dept, string Role)[] users =
+        // CompanyId null = SuperAdmin global (sin tenant). El resto pertenece a una empresa.
+        (string Email, string First, string Last, string Dept, string Role, int? Company)[] users =
         [
-            ("admin@qualitydms.local",      "Administrador", "del Sistema", "Calidad",          RoleAdmin),
-            ("calidad@qualitydms.local",    "Gerente",       "de Calidad",  "Calidad",          RoleQualityManager),
-            ("aprobador1@qualitydms.local", "Juan",          "Pérez",       "Calidad",          RoleApprover),
-            ("aprobador2@qualitydms.local", "María",         "García",      "Operaciones",      RoleApprover),
-            ("autor@qualitydms.local",      "Carlos",        "López",       "Operaciones",      RoleAuthor),
-            ("lector@qualitydms.local",     "Ana",           "Torres",      "Recursos Humanos", RoleViewer),
+            ("super@qualitydms.local",      "Super",         "Admin",       "",                 RoleSuperAdmin,     null),
+            ("admin@qualitydms.local",      "Administrador", "del Sistema", "Calidad",          RoleAdmin,          acmeId),
+            ("adminempresa@qualitydms.local","Admin",        "ACME",        "Calidad",          RoleCompanyAdmin,   acmeId),
+            ("calidad@qualitydms.local",    "Gerente",       "de Calidad",  "Calidad",          RoleQualityManager, acmeId),
+            ("aprobador1@qualitydms.local", "Juan",          "Pérez",       "Calidad",          RoleApprover,       acmeId),
+            ("aprobador2@qualitydms.local", "María",         "García",      "Operaciones",      RoleApprover,       acmeId),
+            ("autor@qualitydms.local",      "Carlos",        "López",       "Operaciones",      RoleAuthor,         acmeId),
+            ("lector@qualitydms.local",     "Ana",           "Torres",      "Recursos Humanos", RoleViewer,         acmeId),
+            ("admin.beta@qualitydms.local", "Admin",         "Beta",        "",                 RoleCompanyAdmin,   betaId),
         ];
 
-        foreach (var (email, first, last, dept, role) in users)
+        foreach (var (email, first, last, dept, role, company) in users)
         {
             if (await userManager.FindByEmailAsync(email) is not null) continue;
 
@@ -107,6 +134,7 @@ public static class DbSeeder
                 EmailConfirmed = true,
                 FirstName      = first,
                 LastName       = last,
+                CompanyId      = company,
                 DepartmentId   = depts.TryGetValue(dept, out var id) ? id : null,
                 IsActive       = true,
             };
@@ -127,42 +155,45 @@ public static class DbSeeder
 
     // ── Categorías ──────────────────────────────────────────────────────────
     private static async Task<Dictionary<string, int>> SeedCategoriesAsync(
-        QualityDMSDbContext db, ILogger logger)
+        QualityDMSDbContext db, int companyId, ILogger logger)
     {
-        if (!await db.DocumentCategories.AnyAsync())
+        if (!await db.DocumentCategories.AnyAsync(c => c.CompanyId == companyId))
         {
             db.DocumentCategories.AddRange(
-                new DocumentCategory { Code = "POL", Name = "Políticas",      Description = "Políticas organizacionales", CreatedBy = SeedBy },
-                new DocumentCategory { Code = "PRO", Name = "Procedimientos", Description = "Procedimientos operativos",   CreatedBy = SeedBy },
-                new DocumentCategory { Code = "INS", Name = "Instructivos",   Description = "Instructivos de trabajo",     CreatedBy = SeedBy },
-                new DocumentCategory { Code = "FOR", Name = "Formatos",       Description = "Formatos y plantillas",       CreatedBy = SeedBy }
+                new DocumentCategory { CompanyId = companyId, Code = "POL", Name = "Políticas",      Description = "Políticas organizacionales", CreatedBy = SeedBy },
+                new DocumentCategory { CompanyId = companyId, Code = "PRO", Name = "Procedimientos", Description = "Procedimientos operativos",   CreatedBy = SeedBy },
+                new DocumentCategory { CompanyId = companyId, Code = "INS", Name = "Instructivos",   Description = "Instructivos de trabajo",     CreatedBy = SeedBy },
+                new DocumentCategory { CompanyId = companyId, Code = "FOR", Name = "Formatos",       Description = "Formatos y plantillas",       CreatedBy = SeedBy }
             );
             await db.SaveChangesAsync();
 
             // Subcategoría para mostrar jerarquía (ParentCategoryId).
-            var procId = await db.DocumentCategories.Where(c => c.Code == "PRO")
+            var procId = await db.DocumentCategories.Where(c => c.CompanyId == companyId && c.Code == "PRO")
                                                     .Select(c => c.CategoryId).FirstAsync();
             db.DocumentCategories.Add(new DocumentCategory
             {
-                Code = "PRO-SEG", Name = "Procedimientos de Seguridad",
+                CompanyId = companyId, Code = "PRO-SEG", Name = "Procedimientos de Seguridad",
                 Description = "Subcategoría de procedimientos", ParentCategoryId = procId, CreatedBy = SeedBy,
             });
             await db.SaveChangesAsync();
             logger.LogInformation("DbSeeder: categorías sembradas");
         }
 
-        return await db.DocumentCategories.ToDictionaryAsync(c => c.Name, c => c.CategoryId);
+        return await db.DocumentCategories.Where(c => c.CompanyId == companyId)
+                                          .ToDictionaryAsync(c => c.Name, c => c.CategoryId);
     }
 
     // ── Flujo de aprobación ───────────────────────────────────────────────────
     private static async Task<WorkflowTemplate> SeedWorkflowAsync(
-        QualityDMSDbContext db, ILogger logger)
+        QualityDMSDbContext db, int companyId, ILogger logger)
     {
-        var existing = await db.WorkflowTemplates.Include(t => t.Steps).FirstOrDefaultAsync();
+        var existing = await db.WorkflowTemplates.Include(t => t.Steps)
+            .FirstOrDefaultAsync(t => t.CompanyId == companyId);
         if (existing is not null) return existing;
 
         var template = new WorkflowTemplate
         {
+            CompanyId   = companyId,
             Name        = "Flujo de Aprobación de Calidad",
             Description = "Revisión técnica y aprobación final por gerencia de calidad",
             IsActive    = true,
@@ -184,12 +215,13 @@ public static class DbSeeder
     private static async Task SeedDocumentsAsync(
         QualityDMSDbContext db,
         UserManager<ApplicationUser> userManager,
+        int companyId,
         Dictionary<string, int> depts,
         Dictionary<string, int> cats,
         WorkflowTemplate template,
         ILogger logger)
     {
-        if (await db.Documents.AnyAsync()) return;
+        if (await db.Documents.AnyAsync(d => d.CompanyId == companyId)) return;
 
         var admin     = await userManager.FindByEmailAsync("admin@qualitydms.local");
         var autor     = await userManager.FindByEmailAsync("autor@qualitydms.local");
@@ -200,7 +232,7 @@ public static class DbSeeder
 
         // 1) Documento APROBADO: borrador 0.1 (historial) + versión vigente 1.0 (sellada).
         var pol = Document.Create("POL-001", "Política de Calidad",
-            cats["Políticas"], depts["Calidad"], authorId);
+            cats["Políticas"], depts["Calidad"], authorId, companyId);
         pol.Description = "Política general del sistema de gestión de calidad";
         pol.WorkflowTemplateId = template.WorkflowTemplateId;
         pol.ClearDomainEvents();
@@ -244,7 +276,7 @@ public static class DbSeeder
 
         // 2) Documento EN REVISIÓN: borrador 0.1 en estado PendingApproval, flujo en paso 1.
         var pro = Document.Create("PRO-001", "Procedimiento de Control de Documentos",
-            cats["Procedimientos"], depts["Calidad"], authorId);
+            cats["Procedimientos"], depts["Calidad"], authorId, companyId);
         pro.Description = "Procedimiento para creación, revisión y aprobación de documentos";
         pro.WorkflowTemplateId = template.WorkflowTemplateId;
         pro.ClearDomainEvents();
@@ -273,7 +305,7 @@ public static class DbSeeder
 
         // 3) Documento BORRADOR: solo 0.1 en Draft (nunca publicado).
         var ins = Document.Create("INS-001", "Instructivo de Respaldos",
-            cats["Instructivos"], depts["Tecnología"], authorId);
+            cats["Instructivos"], depts["Tecnología"], authorId, companyId);
         ins.Description = "Instructivo para respaldo de información en TI";
         ins.ClearDomainEvents();
 
