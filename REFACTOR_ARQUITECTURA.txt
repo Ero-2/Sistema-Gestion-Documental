@@ -1,0 +1,123 @@
+═══════════════════════════════════════════════════════════════════════════════
+ REFACTOR DE ARQUITECTURA — Sistema de Gestión Documental
+ Fecha: 2026-05-28
+═══════════════════════════════════════════════════════════════════════════════
+
+────────────────────────────────────────────────────────────────────────────────
+ QUÉ PEDÍA LA SPEC
+────────────────────────────────────────────────────────────────────────────────
+- 3 grupos desacoplados.
+- Comunicación UNIDIRECCIONAL por APIs REST.
+- Sin polling / cron / long-polling / intervalos (para sync documental).
+- Auth centralizada en .NET (única fuente de usuarios/roles/passwords).
+- Seeders (datos de prueba precargados).
+- UI sin IDs hasheados / encriptados.
+
+────────────────────────────────────────────────────────────────────────────────
+ QUÉ ENCONTRÉ ROTO vs SPEC
+────────────────────────────────────────────────────────────────────────────────
+| Problema                                                  | Violaba                          |
+|-----------------------------------------------------------|----------------------------------|
+| FastAPI tenía poller leyendo SQL cada 30s (_auto_sync_loop)| "sin polling"                   |
+| FastAPI + PHP conectaban directo a SQL Server             | "solo unidireccional, no DB ajena"|
+| Webhook /indexer/notify hacía .NET->FastAPI->SELECT a SQL | "FastAPI no toca SQL"            |
+| No había seeders                                          | "datos de prueba precargados"    |
+
+────────────────────────────────────────────────────────────────────────────────
+ QUÉ HICE
+────────────────────────────────────────────────────────────────────────────────
+
+1. MATÉ EL POLLING
+   - Borré _auto_sync_loop, SYNC_INTERVAL_SECONDS, bulk_sync.py, /sync/start,
+     botón "Bulk Sync" del admin.
+   - Archivos: main.py, .env, setup.ps1, env_gen.sh, routes/admin.py
+
+2. CORTÉ SQL SERVER EN SECUNDARIOS (solo .NET lo toca)
+   - database.py (FastAPI): sin pyodbc, solo Mongo.
+   - Borré sqlserver.php, test_sql.php (código muerto).
+   - docker-compose: quité SQL_* / SQLSERVER_* env + depends_on: sqlserver.
+   - 4 Dockerfiles (src/ y docker/): sin driver ODBC / sqlsrv / pyodbc / msodbc.
+
+3. REEMPLACÉ EL WEBHOOK QUE LEÍA SQL
+   - Antes: .NET -> /indexer/notify (document_id) -> FastAPI SELECT SQL.
+   - Ahora: .NET -> /indexer/upsert (payload completo) -> FastAPI lee archivo del volumen.
+   - Archivos: IPublicDmsWebhookService.cs, PublicDmsWebhookService.cs,
+     ApproveStepCommandHandler.cs, routes/indexer.py (quitado /notify).
+
+4. SEEDERS
+   - Creado DbSeeder.cs: roles, usuarios, deptos, categorías, flujo, 3 docs con estados.
+   - Wireado en Program.cs (dentro del scope existente, solo Development).
+
+────────────────────────────────────────────────────────────────────────────────
+ CÓMO FUNCIONA AHORA
+────────────────────────────────────────────────────────────────────────────────
+
+LOGIN (auth centralizada):
+   Usuario en PHP/FastAPI -> ingresa credenciales
+     -> sistema secundario llama .NET POST /api/v1/auth/validate
+     -> .NET valida contra SQL Server (único con usuarios)
+     -> responde {userId, userName, roles}
+     -> PHP crea sesión / FastAPI emite su JWT
+   Secundarios NO guardan passwords.
+
+APROBACIÓN DE DOCUMENTO (eventos, inmediato):
+   .NET aprueba doc (estado -> Approved en SQL Server)
+     -> push HTTP paralelo, inmediato:
+        |-> POST php/api/events.php?action=approve  -> inserta en PostgreSQL
+        |-> POST fastapi/indexer/upsert            -> lee PDF del volumen,
+                                                       extrae texto, indexa Mongo
+   Sin polling. Sin que PHP/FastAPI toquen SQL. Error en uno no bloquea el otro.
+
+BÚSQUEDA PÚBLICA:
+   Usuario busca en PHP -> PHP llama fastapi/indexer/search?q=...
+     -> Mongo full-text -> devuelve postgres_ids
+     -> PHP consulta PostgreSQL local -> muestra resultados
+
+ARCHIVOS:
+   Todos los servicios comparten volumen Docker uploads_data
+   (permitido — es un volumen de archivos, no una base de datos).
+
+────────────────────────────────────────────────────────────────────────────────
+ SEEDERS — DETALLE (DbSeeder.cs, solo Development, idempotente)
+────────────────────────────────────────────────────────────────────────────────
+| Tipo          | Datos                                                              |
+|---------------|--------------------------------------------------------------------|
+| Roles         | Admin, QualityManager, Approver, Author, Viewer                    |
+| Usuarios      | 6 (password común Calidad#2026Dev, hash PBKDF2 vía UserManager)     |
+| Departamentos | Calidad, Operaciones, RRHH, Tecnología                             |
+| Categorías    | Políticas, Procedimientos (+subcat Seguridad), Instructivos, Formatos|
+| Flujo         | "Flujo de Aprobación de Calidad" 2 pasos (Revisión -> Aprobación)   |
+| Documentos    | POL-001 Approved (flujo completo +2 acciones), PRO-001 PendingApproval, INS-001 Draft — todos con versión |
+
+Usuarios de prueba (password: Calidad#2026Dev):
+   admin@qualitydms.local       -> Admin
+   calidad@qualitydms.local     -> QualityManager (aprobación final)
+   aprobador1@qualitydms.local  -> Approver
+   aprobador2@qualitydms.local  -> Approver
+   autor@qualitydms.local       -> Author
+   lector@qualitydms.local      -> Viewer
+
+NOTA: seeder en C# y no SQL puro porque ASP.NET Identity hashea passwords con
+PBKDF2 (no se puede generar hash válido en SQL). Usa UserManager (forma correcta).
+El db/sqlserver/01_schema.sql (generado por dotnet ef dbcontext script) queda
+intacto como referencia de schema.
+
+────────────────────────────────────────────────────────────────────────────────
+ ESTADO DE VERIFICACIÓN
+────────────────────────────────────────────────────────────────────────────────
+- Python: compila OK (py_compile todos los módulos).
+- .NET: revisión manual (no hay dotnet instalado local para build).
+
+ERRORES QUE COMETÍ Y CORREGÍ EN EL CAMINO:
+   1. Sobrescribí 01_schema.sql real -> restaurado desde git.
+   2. Primer DbSeeder usó API inventada -> reescrito con API real de entidades.
+   3. Creé 2 archivos de evento duplicados (ya existían inline) -> borrados/revertidos.
+
+────────────────────────────────────────────────────────────────────────────────
+ PENDIENTE (spec)
+────────────────────────────────────────────────────────────────────────────────
+1. UI sin IDs hasheados — revisar Views .cshtml + PHP.
+2. Entorno producción (solo existe Development).
+3. Eventos update/version/obsolete -> push a FastAPI si requieren reindex de contenido.
+
+═══════════════════════════════════════════════════════════════════════════════

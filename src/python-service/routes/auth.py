@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import jwt
@@ -99,7 +99,7 @@ async def login(req: LoginRequest):
 
 
 @router.get("/me")
-async def get_current_user(authorization: Optional[str] = None):
+async def get_current_user(authorization: Optional[str] = Header(default=None)):
     """
     Obtener información del usuario actual desde token JWT.
     """

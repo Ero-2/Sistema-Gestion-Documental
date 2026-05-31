@@ -31,6 +31,12 @@ class DocumentEventHandler
     {
         $this->validateApproveData($data);
 
+        // Sembrar categoría y departamento referenciados (vienen del evento .NET).
+        // Postgres es un modelo de lectura desacoplado: no consulta SQL Server, así que
+        // las tablas de catálogo se pueblan vía el mismo push de aprobación (upsert por id).
+        $this->upsertCatalog('categories', $data['category_id'], $data['category_name']);
+        $this->upsertCatalog('departments', $data['department_id'], $data['department_name']);
+
         $query = <<<SQL
             INSERT INTO publicdms.documents (
                 id, code, title, category_id, category_name,
@@ -215,6 +221,25 @@ class DocumentEventHandler
         if (!isset($data['document_id'])) {
             throw new Exception("Missing required field: document_id");
         }
+    }
+
+    // ── Catálogos (categorías / departamentos) ─────────────────────
+
+    /**
+     * Upsert idempotente de un catálogo referenciado por el documento.
+     * Mantiene la integridad referencial sin que Postgres consulte SQL Server:
+     * el id+nombre llegan en el propio evento de aprobación desde .NET.
+     */
+    private function upsertCatalog(string $table, $id, $name)
+    {
+        if (empty($id) || empty($name)) {
+            return;
+        }
+
+        $query = "INSERT INTO publicdms.$table (id, name) VALUES (:id, :name)
+                  ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name;";
+        $stmt = $this->pdo->prepare($query);
+        $stmt->execute([':id' => $id, ':name' => $name]);
     }
 
     // ── Logging ────────────────────────────────────────────────────

@@ -1,10 +1,12 @@
 import asyncio
+import os
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse
 
 from database import collection
-from extractor import MAX_CONTENT_CHARS, extract_text, get_file_info
+from extractor import MAX_CONTENT_CHARS, STORAGE_ROOT, extract_text, get_file_info, resolve_path
 from models import PublicDMSMetadata
 
 router = APIRouter(prefix="/indexer", tags=["Indexer"])
@@ -62,3 +64,55 @@ async def search_documents(
         return {"ids": ids}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/file/{name}")
+async def get_file(name: str):
+    """
+    Sirve un archivo indexado desde el volumen compartido (sólo lectura).
+    Resuelve la ruta por el `file_url` guardado en Mongo (no confía en el nombre
+    recibido) y verifica que quede dentro de STORAGE_ROOT (anti path-traversal).
+    """
+    doc = await collection.find_one(
+        {"file_name": name},
+        {"_id": 0, "file_url": 1, "file_name": 1, "mime_type": 1},
+    )
+    if not doc or not doc.get("file_url"):
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+
+    real = os.path.realpath(resolve_path(doc["file_url"]))
+    root = os.path.realpath(STORAGE_ROOT)
+    if real != root and not real.startswith(root + os.sep):
+        raise HTTPException(status_code=403, detail="Ruta inválida")
+    if not os.path.isfile(real):
+        raise HTTPException(status_code=404, detail="Archivo no disponible")
+
+    return FileResponse(
+        real,
+        media_type=doc.get("mime_type") or "application/octet-stream",
+        filename=doc.get("file_name") or name,
+    )
+
+
+@router.get("/content/{name}")
+async def get_content(name: str):
+    """
+    Texto extraído de un documento indexado (para previsualizar formatos que el
+    navegador no renderiza: ppt, odt, rtf, doc, etc.). Se sirve el contenido ya
+    extraído en Mongo; no vuelve a leer el archivo.
+    """
+    doc = await collection.find_one(
+        {"file_name": name},
+        {"_id": 0, "title": 1, "extension": 1, "content": 1,
+         "content_extracted": 1, "content_extraction_error": 1},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+
+    return {
+        "title":      doc.get("title"),
+        "extension":  doc.get("extension"),
+        "extracted":  bool(doc.get("content_extracted")),
+        "error":      doc.get("content_extraction_error"),
+        "content":    doc.get("content") or "",
+    }

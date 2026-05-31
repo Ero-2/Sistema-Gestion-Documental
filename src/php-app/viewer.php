@@ -1,4 +1,6 @@
 <?php
+require_once __DIR__ . '/config/storage.php';
+
 if (!isset($_GET['file']) || trim($_GET['file']) === '') {
     http_response_code(400);
     exit('Parámetro file requerido.');
@@ -15,8 +17,40 @@ $ext      = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
 $fileUrl  = 'view_pdf.php?file=' . urlencode($_GET['file']);
 $dlUrl    = $fileUrl . '&download=1';
 
-$imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
-$textExts  = ['txt', 'csv', 'log', 'json', 'xml', 'yaml', 'yml', 'ini', 'md'];
+$imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'];
+$textExts  = ['txt', 'csv', 'log', 'json', 'xml', 'yaml', 'yml', 'ini', 'md', 'tsv', 'conf'];
+$htmlExts  = ['html', 'htm'];
+
+// Formatos sin render nativo en navegador: se previsualiza el texto que FastAPI
+// ya extrajo (ppt, pptx, odt, ods, odp, rtf, doc viejo, etc.).
+$nativeExts = array_merge(['pdf', 'docx', 'xlsx', 'xls'], $imageExts, $textExts, $htmlExts);
+
+/**
+ * Trae el texto extraído desde FastAPI (server-to-server con API key).
+ * Devuelve [extracted(bool), content(string), error(?string)] o null si falla.
+ */
+function fetch_extracted_content(string $name): ?array
+{
+    $base = defined('FASTAPI_URL') ? FASTAPI_URL : (getenv('FASTAPI_URL') ?: 'http://fastapi:8000');
+    $key  = defined('FASTAPI_API_KEY') ? FASTAPI_API_KEY : (getenv('FASTAPI_API_KEY') ?: '');
+    $ch = curl_init(rtrim($base, '/') . '/indexer/content/' . rawurlencode($name));
+    curl_setopt_array($ch, [
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT        => 5,
+        CURLOPT_HTTPHEADER     => ['X-API-Key: ' . $key],
+    ]);
+    $res  = curl_exec($ch);
+    $code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    curl_close($ch);
+    if ($res === false || $code !== 200) {
+        return null;
+    }
+    $data = json_decode($res, true);
+    if (!is_array($data)) {
+        return null;
+    }
+    return [(bool)($data['extracted'] ?? false), (string)($data['content'] ?? ''), $data['error'] ?? null];
+}
 ?>
 <!DOCTYPE html>
 <html lang="es">
@@ -43,6 +77,9 @@ $textExts  = ['txt', 'csv', 'log', 'json', 'xml', 'yaml', 'yml', 'ini', 'md'];
         #docx-container { padding: 2rem; max-width: 860px; margin: 0 auto; background: #fff; color: #111; min-height: 100%; }
         #text-container { padding: 1.5rem; }
         #text-container pre { background: #12122a; color: #c8f0c8; padding: 1rem; border-radius: 6px; font-size: .85rem; white-space: pre-wrap; word-break: break-word; }
+        .preview-note { background: #16213e; border: 1px solid #0f3460; border-radius: 6px; padding: .6rem .9rem; margin-bottom: 1rem; font-size: .82rem; color: #a0a0c0; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+        .preview-note .dl-inline { color: #4fd1c5; text-decoration: none; margin-left: auto; }
+        .preview-note .dl-inline:hover { text-decoration: underline; }
         #image-container { display: flex; justify-content: center; align-items: flex-start; padding: 2rem; }
         #image-container img { max-width: 100%; border-radius: 6px; box-shadow: 0 4px 20px rgba(0,0,0,.5); }
         #unsupported { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 80%; gap: 1rem; }
@@ -140,14 +177,36 @@ $textExts  = ['txt', 'csv', 'log', 'json', 'xml', 'yaml', 'yml', 'ini', 'md'];
         .catch(err => { document.getElementById('text-content').textContent = 'Error: ' + err.message; });
     </script>
 
+<?php elseif (in_array($ext, $htmlExts)): ?>
+    <iframe src="<?= htmlspecialchars($fileUrl) ?>" sandbox="allow-same-origin"
+            title="<?= htmlspecialchars($filename) ?>"></iframe>
+
 <?php else: ?>
-    <div id="unsupported">
-        <i class="bi bi-file-earmark-x" style="font-size:4rem;color:#555"></i>
-        <p class="text-muted">Vista previa no disponible para <strong>.<?= htmlspecialchars($ext) ?></strong></p>
-        <a href="<?= htmlspecialchars($dlUrl) ?>" class="btn btn-outline-light">
-            <i class="bi bi-download"></i> Descargar archivo
-        </a>
-    </div>
+    <?php $extracted = fetch_extracted_content($filename); ?>
+    <?php if ($extracted !== null && $extracted[0] && trim($extracted[1]) !== ''): ?>
+        <div id="text-container">
+            <div class="preview-note">
+                <i class="bi bi-info-circle"></i>
+                Vista previa de texto (.<?= htmlspecialchars($ext) ?> no se renderiza en el navegador).
+                <a href="<?= htmlspecialchars($dlUrl) ?>" class="dl-inline">
+                    <i class="bi bi-download"></i> Descargar original
+                </a>
+            </div>
+            <pre id="text-content"><?= htmlspecialchars($extracted[1]) ?></pre>
+        </div>
+    <?php else: ?>
+        <div id="unsupported">
+            <i class="bi bi-file-earmark-x" style="font-size:4rem;color:#555"></i>
+            <p class="text-muted">Vista previa no disponible para <strong>.<?= htmlspecialchars($ext) ?></strong>
+            <?php if ($extracted !== null && $extracted[2]): ?>
+                <br><span style="font-size:.8rem">(<?= htmlspecialchars($extracted[2]) ?>)</span>
+            <?php endif; ?>
+            </p>
+            <a href="<?= htmlspecialchars($dlUrl) ?>" class="btn btn-outline-light">
+                <i class="bi bi-download"></i> Descargar archivo
+            </a>
+        </div>
+    <?php endif; ?>
 <?php endif; ?>
 
 </div>

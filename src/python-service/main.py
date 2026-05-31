@@ -57,7 +57,7 @@ _API_KEY    = os.getenv("FASTAPI_API_KEY", "")
 _OPEN_PATHS = {"/", "/docs", "/openapi.json", "/redoc", "/health",
                "/admin/viewer", "/admin/stats", "/admin/docs",
                "/auth/login", "/auth/me", "/api/auth/login",
-               "/search"}
+               "/search", "/search/documents"}
 
 
 class APIKeyMiddleware(BaseHTTPMiddleware):
@@ -71,6 +71,10 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
 
         # Allow auth endpoints without API key (handled by individual route)
         if path.startswith("/auth/"):
+            return await call_next(request)
+
+        # Consulta pública de archivos aprobados (abierto en nueva pestaña, sin header)
+        if path.startswith("/indexer/file/"):
             return await call_next(request)
 
         # Check API key for other endpoints
