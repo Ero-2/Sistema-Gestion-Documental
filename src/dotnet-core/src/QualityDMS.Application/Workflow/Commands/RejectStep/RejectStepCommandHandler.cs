@@ -16,7 +16,7 @@ public class RejectStepCommandHandler(
 {
     public async Task<Result> Handle(RejectStepCommand cmd, CancellationToken ct)
     {
-        var document = await documentRepository.GetByIdAsync(cmd.DocumentId, ct)
+        var document = await documentRepository.GetByIdWithVersionsAsync(cmd.DocumentId, ct)
             ?? throw new NotFoundException(nameof(Document), cmd.DocumentId);
 
         var instance = await workflowRepository.GetActiveInstanceByDocumentAsync(cmd.DocumentId, ct)

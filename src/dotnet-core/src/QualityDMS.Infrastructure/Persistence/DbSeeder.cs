@@ -196,55 +196,74 @@ public static class DbSeeder
         var aprobador = await userManager.FindByEmailAsync("aprobador1@qualitydms.local");
         var gerente   = await userManager.FindByEmailAsync("calidad@qualitydms.local");
         var authorId  = autor?.Id ?? admin!.Id;
+        var now       = DateTime.UtcNow;
 
-        // 1) Documento APROBADO (CurrentStatus = Approved) con versión vigente y flujo completo.
+        // 1) Documento APROBADO: borrador 0.1 (historial) + versión vigente 1.0 (sellada).
         var pol = Document.Create("POL-001", "Política de Calidad",
             cats["Políticas"], depts["Calidad"], authorId);
         pol.Description = "Política general del sistema de gestión de calidad";
         pol.WorkflowTemplateId = template.WorkflowTemplateId;
-        pol.SubmitForApproval();
-        pol.Approve(gerente!.Id);
         pol.ClearDomainEvents();
+
+        var polDraft = new DocumentVersion
+        {
+            VersionNumber = "0.1", FilePath = "seed/POL-001-v0.1.pdf", FileName = "POL-001-v0.1.pdf",
+            FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Borrador inicial",
+            Status = VersionStatus.Draft, IsCurrent = false, CreatedBy = authorId,
+        };
+        var polApproved = new DocumentVersion
+        {
+            VersionNumber = "1.0", FilePath = "seed/POL-001-v1.pdf", FileName = "POL-001-v1.pdf",
+            FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Versión aprobada inicial",
+            Status = VersionStatus.Approved, IsCurrent = true,
+            ApprovedBy = gerente!.Id, ApprovedAt = now, CreatedBy = gerente.Id,
+        };
+        pol.AddVersion(polDraft);
+        pol.AddVersion(polApproved);
+        pol.RecalculateStatus();          // → Approved, EffectiveDate = now
         db.Documents.Add(pol);
         await db.SaveChangesAsync();
 
-        db.DocumentVersions.Add(DocumentVersion.Create(
-            pol.DocumentId, "1.0", "seed/POL-001-v1.pdf", "POL-001-v1.pdf",
-            0, "application/pdf", authorId, "Versión inicial"));
-
-        // Flujo completado (aprobado) con una acción de aprobación por paso.
+        // Flujo completado (la instancia revisó el borrador 0.1 que se selló a 1.0).
         db.WorkflowInstances.Add(new WorkflowInstance
         {
             DocumentId         = pol.DocumentId,
+            DocumentVersionId  = polDraft.VersionId,
             WorkflowTemplateId = template.WorkflowTemplateId,
             CurrentStepOrder   = 2,
             Status             = WorkflowStepStatus.Approved,
-            CompletedAt        = DateTime.UtcNow,
+            CompletedAt        = now,
             CreatedBy          = SeedBy,
             Actions =
             {
-                new WorkflowAction { StepOrder = 1, ActionByUserId = aprobador!.Id, Action = WorkflowStepStatus.Approved, Comments = "Revisión técnica conforme", ActionDate = DateTime.UtcNow, CreatedBy = SeedBy },
-                new WorkflowAction { StepOrder = 2, ActionByUserId = gerente.Id,    Action = WorkflowStepStatus.Approved, Comments = "Aprobado",                  ActionDate = DateTime.UtcNow, CreatedBy = SeedBy },
+                new WorkflowAction { StepOrder = 1, ActionByUserId = aprobador!.Id, Action = WorkflowStepStatus.Approved, Comments = "Revisión técnica conforme", ActionDate = now, CreatedBy = SeedBy },
+                new WorkflowAction { StepOrder = 2, ActionByUserId = gerente.Id,    Action = WorkflowStepStatus.Approved, Comments = "Aprobado",                  ActionDate = now, CreatedBy = SeedBy },
             },
         });
         await db.SaveChangesAsync();
 
-        // 2) Documento EN REVISIÓN (CurrentStatus = PendingApproval), flujo pendiente en paso 1.
+        // 2) Documento EN REVISIÓN: borrador 0.1 en estado PendingApproval, flujo en paso 1.
         var pro = Document.Create("PRO-001", "Procedimiento de Control de Documentos",
             cats["Procedimientos"], depts["Calidad"], authorId);
         pro.Description = "Procedimiento para creación, revisión y aprobación de documentos";
         pro.WorkflowTemplateId = template.WorkflowTemplateId;
-        pro.SubmitForApproval();
         pro.ClearDomainEvents();
+
+        var proDraft = new DocumentVersion
+        {
+            VersionNumber = "0.1", FilePath = "seed/PRO-001-v0.1.pdf", FileName = "PRO-001-v0.1.pdf",
+            FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Borrador inicial",
+            Status = VersionStatus.PendingApproval, IsCurrent = false, CreatedBy = authorId,
+        };
+        pro.AddVersion(proDraft);
+        pro.RecalculateStatus();          // → PendingApproval
         db.Documents.Add(pro);
         await db.SaveChangesAsync();
 
-        db.DocumentVersions.Add(DocumentVersion.Create(
-            pro.DocumentId, "1.0", "seed/PRO-001-v1.pdf", "PRO-001-v1.pdf",
-            0, "application/pdf", authorId, "Versión inicial"));
         db.WorkflowInstances.Add(new WorkflowInstance
         {
             DocumentId         = pro.DocumentId,
+            DocumentVersionId  = proDraft.VersionId,
             WorkflowTemplateId = template.WorkflowTemplateId,
             CurrentStepOrder   = 1,
             Status             = WorkflowStepStatus.InProgress,
@@ -252,19 +271,23 @@ public static class DbSeeder
         });
         await db.SaveChangesAsync();
 
-        // 3) Documento BORRADOR (CurrentStatus = Draft).
+        // 3) Documento BORRADOR: solo 0.1 en Draft (nunca publicado).
         var ins = Document.Create("INS-001", "Instructivo de Respaldos",
             cats["Instructivos"], depts["Tecnología"], authorId);
         ins.Description = "Instructivo para respaldo de información en TI";
         ins.ClearDomainEvents();
+
+        var insDraft = new DocumentVersion
+        {
+            VersionNumber = "0.1", FilePath = "seed/INS-001-v0.1.pdf", FileName = "INS-001-v0.1.pdf",
+            FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Borrador inicial",
+            Status = VersionStatus.Draft, IsCurrent = false, CreatedBy = authorId,
+        };
+        ins.AddVersion(insDraft);
+        ins.RecalculateStatus();          // → Draft
         db.Documents.Add(ins);
         await db.SaveChangesAsync();
 
-        db.DocumentVersions.Add(DocumentVersion.Create(
-            ins.DocumentId, "0.1", "seed/INS-001-v0.1.pdf", "INS-001-v0.1.pdf",
-            0, "application/pdf", authorId, "Borrador inicial"));
-        await db.SaveChangesAsync();
-
-        logger.LogInformation("DbSeeder: 3 documentos (Approved / PendingApproval / Draft) con versiones y flujo");
+        logger.LogInformation("DbSeeder: 3 documentos (Approved 1.0 / PendingApproval 0.1 / Draft 0.1) con versiones e historial");
     }
 }

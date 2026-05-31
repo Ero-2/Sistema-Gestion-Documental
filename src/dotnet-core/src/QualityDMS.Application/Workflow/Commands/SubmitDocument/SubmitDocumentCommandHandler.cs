@@ -16,7 +16,7 @@ public class SubmitDocumentCommandHandler(
 {
     public async Task<Result> Handle(SubmitDocumentCommand cmd, CancellationToken ct)
     {
-        var document = await documentRepository.GetByIdAsync(cmd.DocumentId, ct)
+        var document = await documentRepository.GetByIdWithVersionsAsync(cmd.DocumentId, ct)
             ?? throw new NotFoundException(nameof(Document), cmd.DocumentId);
 
         if (document.WorkflowTemplateId is null)
@@ -25,12 +25,13 @@ public class SubmitDocumentCommandHandler(
         var template = await workflowRepository.GetTemplateByIdAsync(document.WorkflowTemplateId.Value, ct)
             ?? throw new NotFoundException(nameof(WorkflowTemplate), document.WorkflowTemplateId.Value);
 
-        document.SubmitForApproval();
+        var submitted = document.SubmitForApproval();
         document.UpdatedBy = currentUser.UserId;
 
         var instance = new WorkflowInstance
         {
             DocumentId = document.DocumentId,
+            DocumentVersionId = submitted.VersionId,
             WorkflowTemplateId = template.WorkflowTemplateId,
             CurrentStepOrder = 1,
             Status = WorkflowStepStatus.InProgress,

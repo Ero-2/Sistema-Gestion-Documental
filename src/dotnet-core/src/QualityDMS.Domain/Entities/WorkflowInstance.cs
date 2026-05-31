@@ -7,6 +7,8 @@ public class WorkflowInstance : AuditableEntity
 {
     public int WorkflowInstanceId { get; set; }
     public int DocumentId { get; set; }
+    /// <summary>Versión (borrador) concreta que esta instancia somete a aprobación.</summary>
+    public int? DocumentVersionId { get; set; }
     public int WorkflowTemplateId { get; set; }
     public int CurrentStepOrder { get; set; } = 1;
     public WorkflowStepStatus Status { get; set; } = WorkflowStepStatus.Pending;

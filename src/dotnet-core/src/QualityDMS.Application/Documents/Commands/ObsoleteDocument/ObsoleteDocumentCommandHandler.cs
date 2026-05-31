@@ -12,7 +12,7 @@ public class ObsoleteDocumentCommandHandler(
 {
     public async Task<Result> Handle(ObsoleteDocumentCommand cmd, CancellationToken ct)
     {
-        var document = await documentRepository.GetByIdAsync(cmd.DocumentId, ct)
+        var document = await documentRepository.GetByIdWithVersionsAsync(cmd.DocumentId, ct)
             ?? throw new NotFoundException(nameof(Document), cmd.DocumentId);
 
         document.Obsolete();

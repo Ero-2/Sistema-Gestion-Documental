@@ -27,10 +27,9 @@ public class CreateDocumentCommandHandler(
         await documentRepository.AddAsync(document, ct);
         await uow.SaveChangesAsync(ct);
 
-        var version = DocumentVersion.Create(
-            document.DocumentId, "1.0", filePath,
-            cmd.FileName, sizeBytes, cmd.ContentType, currentUser.UserId);
-        document.AddVersion(version);
+        // Primer borrador: 0.1 (no publicable hasta su primera aprobación → 1.0).
+        document.AddDraftVersion(
+            filePath, cmd.FileName, sizeBytes, cmd.ContentType, currentUser.UserId);
 
         documentRepository.Update(document);
         await uow.SaveChangesAsync(ct);

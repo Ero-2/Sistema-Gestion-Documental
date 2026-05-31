@@ -43,12 +43,15 @@ public class ApproveStepCommandHandler(
         var nextStep = steps.FirstOrDefault(s => s.StepOrder > instance.CurrentStepOrder);
         var fullyApproved = nextStep is null;
 
+        DocumentVersion? approvedVersion = null;
         if (fullyApproved)
         {
             instance.Status = WorkflowStepStatus.Approved;
             instance.CompletedAt = DateTime.UtcNow;
             workflowRepository.UpdateInstance(instance);
-            document.Approve(currentUser.UserId);
+            // Sella el borrador en revisión como nueva versión aprobada X.0 (inmutable)
+            // y obsoleta automáticamente la vigente anterior.
+            approvedVersion = document.Approve(currentUser.UserId);
             documentRepository.Update(document);
 
             await notificationService.SendAsync(
@@ -81,12 +84,12 @@ public class ApproveStepCommandHandler(
         {
             try
             {
-                // Obtener versión actual y datos relacionados
-                var currentVersion = document.Versions.FirstOrDefault(v => v.IsCurrent);
+                // Datos de la versión recién sellada (X.0). Solo versiones aprobadas
+                // se publican a PHP/Mongo (los borradores X.Y nunca salen de .NET).
                 var categoryName = document.Category?.Name ?? "Unknown";
                 var departmentName = document.Department?.Name ?? "Unknown";
-                var versionNumber = currentVersion?.VersionNumber ?? "1.0";
-                var fileUrl = currentVersion?.FilePath ?? string.Empty;
+                var versionNumber = approvedVersion?.VersionNumber ?? "1.0";
+                var fileUrl = approvedVersion?.FilePath ?? string.Empty;
 
                 // API 1: Sincronizar documento a PostgreSQL
                 await phpSync.ApproveDocumentAsync(
