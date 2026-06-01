@@ -418,47 +418,85 @@ switch ($Stack) {
 }
 
 # -- Dashboard final ------------------------------------------
+$sep  = "=" * 62
+$dash = "-" * 62
+
 Write-Host ""
-Write-Host ("  " + "=" * 54) -ForegroundColor Cyan
-Write-Host ("        INSTALLATION COMPLETE  [stack: $Stack]") -ForegroundColor White
-Write-Host ("  " + "=" * 54) -ForegroundColor Cyan
+Write-Host "  $sep" -ForegroundColor Cyan
+Write-Host "          INSTALLATION COMPLETE  [stack: $Stack]" -ForegroundColor White
+Write-Host "  $sep" -ForegroundColor Cyan
 Write-Host ""
 
+# Portales
+Write-Host "  PORTALES" -ForegroundColor Cyan
 switch ($Stack) {
     "net" {
-        Write-Host "  -> Admin (CalidadSYS)  http://localhost:5080" -ForegroundColor White
-        Write-Host ""
-        Write-Host "  -> SQL Server          localhost:1434" -ForegroundColor DarkGray
+        Write-Host "  -> Admin .NET (CalidadSYS)    http://localhost:5080"      -ForegroundColor White
     }
     "php" {
-        Write-Host "  -> Portal Publico      http://localhost"       -ForegroundColor White
-        Write-Host "  -> Portal HTTPS        https://localhost:8443" -ForegroundColor White
-        Write-Host ""
-        Write-Host "  -> PostgreSQL          localhost:5433" -ForegroundColor DarkGray
+        Write-Host "  -> Portal Publico (PHP)        http://localhost"           -ForegroundColor White
+        Write-Host "  -> Portal HTTPS (FastAPI)      https://localhost:8443"     -ForegroundColor White
     }
     "indexer" {
-        Write-Host "  -> FastAPI Docs        http://localhost:8001/docs" -ForegroundColor White
-        Write-Host ""
-        Write-Host "  -> MongoDB             localhost:27018" -ForegroundColor DarkGray
+        Write-Host "  -> FastAPI Swagger             http://localhost:8001/docs" -ForegroundColor White
     }
     default {
-        Write-Host "  -> Portal Publico      http://localhost"            -ForegroundColor White
-        Write-Host "  -> Portal HTTPS        https://localhost:8443"      -ForegroundColor White
-        Write-Host "  -> Admin (CalidadSYS)  http://localhost:5080"       -ForegroundColor White
-        Write-Host "  -> FastAPI Docs        http://localhost:8001/docs"  -ForegroundColor White
-        Write-Host ""
-        Write-Host ("  " + "-" * 54) -ForegroundColor DarkGray
-        Write-Host "  -> PostgreSQL          localhost:5433"  -ForegroundColor DarkGray
-        Write-Host "  -> MongoDB             localhost:27018" -ForegroundColor DarkGray
-        Write-Host "  -> SQL Server          localhost:1434"  -ForegroundColor DarkGray
+        Write-Host "  -> Portal Publico (PHP)        http://localhost"           -ForegroundColor White
+        Write-Host "  -> Portal HTTPS (FastAPI)      https://localhost:8443"     -ForegroundColor White
+        Write-Host "  -> Admin .NET (CalidadSYS)     http://localhost:5080"      -ForegroundColor White
+        Write-Host "  -> FastAPI Swagger             http://localhost:8001/docs" -ForegroundColor White
     }
 }
 
+# Bases de datos
 Write-Host ""
-Write-Host ("  " + "-" * 54) -ForegroundColor DarkGray
+Write-Host "  BASES DE DATOS" -ForegroundColor Cyan
+switch ($Stack) {
+    "net"     { Write-Host "  -> SQL Server    localhost:1434"  -ForegroundColor DarkGray }
+    "php"     { Write-Host "  -> PostgreSQL    localhost:5433"  -ForegroundColor DarkGray }
+    "indexer" { Write-Host "  -> MongoDB       localhost:27018" -ForegroundColor DarkGray }
+    default   {
+        Write-Host "  -> SQL Server    localhost:1434"  -ForegroundColor DarkGray
+        Write-Host "  -> PostgreSQL    localhost:5433"  -ForegroundColor DarkGray
+        Write-Host "  -> MongoDB       localhost:27018" -ForegroundColor DarkGray
+    }
+}
+
+# Usuarios registrados
+Write-Host ""
+Write-Host "  $dash" -ForegroundColor DarkGray
+Write-Host "  USUARIOS REGISTRADOS   (password: Calidad#2026Dev)" -ForegroundColor Cyan
+Write-Host "  $dash" -ForegroundColor DarkGray
+Write-Host ("  {0,-16} {1,-38} {2}" -f "ROL", "EMAIL", "EMPRESA") -ForegroundColor DarkGray
+Write-Host "  $dash" -ForegroundColor DarkGray
+Write-Host ("  {0,-16} {1,-38} {2}" -f "SuperAdmin",     "super@qualitydms.local",        "Global") -ForegroundColor White
+Write-Host ("  {0,-16} {1,-38} {2}" -f "Admin",          "admin@qualitydms.local",        "ACME")   -ForegroundColor White
+Write-Host ("  {0,-16} {1,-38} {2}" -f "AdminEmpresa",   "adminempresa@qualitydms.local", "ACME")   -ForegroundColor White
+Write-Host ("  {0,-16} {1,-38} {2}" -f "QualityManager", "calidad@qualitydms.local",      "ACME")   -ForegroundColor White
+Write-Host ("  {0,-16} {1,-38} {2}" -f "Approver",       "aprobador1@qualitydms.local",   "ACME")   -ForegroundColor White
+Write-Host ("  {0,-16} {1,-38} {2}" -f "Approver",       "aprobador2@qualitydms.local",   "ACME")   -ForegroundColor White
+Write-Host ("  {0,-16} {1,-38} {2}" -f "Author",         "autor@qualitydms.local",        "ACME")   -ForegroundColor White
+Write-Host ("  {0,-16} {1,-38} {2}" -f "Viewer",         "lector@qualitydms.local",       "ACME")   -ForegroundColor White
+Write-Host ("  {0,-16} {1,-38} {2}" -f "AdminEmpresa",   "admin.beta@qualitydms.local",   "BETA")   -ForegroundColor White
+
+# Datos sandbox
+if ($seedMode -eq "sandbox") {
+    Write-Host ""
+    Write-Host "  $dash" -ForegroundColor DarkGray
+    Write-Host "  DATOS SANDBOX" -ForegroundColor Cyan
+    Write-Host "  $dash" -ForegroundColor DarkGray
+    Write-Host "  [OK] 10,000 documentos generados en SQL Server"              -ForegroundColor Green
+    Write-Host "  [OK]  7,000 aprobados propagados a PostgreSQL y MongoDB"     -ForegroundColor Green
+    Write-Host "  [OK]  2,000 en revision  |  1,000 borradores"               -ForegroundColor Green
+}
+
+# Comandos utiles
+Write-Host ""
+Write-Host "  $dash" -ForegroundColor DarkGray
+Write-Host "  COMANDOS UTILES" -ForegroundColor Cyan
 Write-Host ("  " + $composeCmd + " -f " + $composeFile + " ps")      -ForegroundColor DarkGray
 Write-Host ("  " + $composeCmd + " -f " + $composeFile + " logs -f") -ForegroundColor DarkGray
 Write-Host ("  " + $composeCmd + " -f " + $composeFile + " down")    -ForegroundColor DarkGray
 Write-Host ""
-Write-Host ("  " + "=" * 54) -ForegroundColor Cyan
+Write-Host "  $sep" -ForegroundColor Cyan
 Write-Host ""

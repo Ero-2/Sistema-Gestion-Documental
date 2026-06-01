@@ -100,40 +100,80 @@ create_dirs() {
 # ── Dashboard final ───────────────────────────────────────────
 show_dashboard() {
     echo
-    _section_line() { printf "  %s\n" "$(printf '═%.0s' {1..54})"; }
-    _section_line
+    local line
+    line="$(printf '═%.0s' {1..58})"
+    printf "  %s\n" "$line"
     printf "        INSTALLATION COMPLETE  ${GRAY}[stack: ${STACK}]${RESET}\n"
-    _section_line
+    printf "  %s\n" "$line"
     echo
 
+    # ── URLs por stack ────────────────────────────────────────
     case "$STACK" in
         net)
-            printf "  ${WHITE}→ Admin (CalidadSYS)${RESET}  http://localhost:5080\n"
-            printf "  ${GRAY}→ SQL Server          localhost:1434${RESET}\n"
+            printf "  ${CYAN}PORTALES${RESET}\n"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Admin (CalidadSYS)" "http://localhost:5080"
+            echo
+            printf "  ${CYAN}BASES DE DATOS${RESET}\n"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "SQL Server" "localhost:1434"
             ;;
         php)
-            printf "  ${WHITE}→ Portal Público      http://localhost${RESET}\n"
-            printf "  ${WHITE}→ Portal HTTPS        https://localhost:8443${RESET}\n"
-            printf "  ${GRAY}→ PostgreSQL          localhost:5433${RESET}\n"
+            printf "  ${CYAN}PORTALES${RESET}\n"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal Publico (PHP)" "http://localhost"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal HTTPS" "https://localhost:8443"
+            echo
+            printf "  ${CYAN}BASES DE DATOS${RESET}\n"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "PostgreSQL" "localhost:5433"
             ;;
         indexer)
-            printf "  ${WHITE}→ FastAPI Docs        http://localhost:8001/docs${RESET}\n"
-            printf "  ${GRAY}→ MongoDB             localhost:27018${RESET}\n"
+            printf "  ${CYAN}PORTALES${RESET}\n"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "FastAPI Docs" "http://localhost:8001/docs"
+            echo
+            printf "  ${CYAN}BASES DE DATOS${RESET}\n"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "MongoDB" "localhost:27018"
             ;;
         all|*)
-            printf "  ${WHITE}→ Portal Público      http://localhost${RESET}\n"
-            printf "  ${WHITE}→ Portal HTTPS        https://localhost:8443${RESET}\n"
-            printf "  ${WHITE}→ Admin (CalidadSYS)  http://localhost:5080${RESET}\n"
-            printf "  ${WHITE}→ FastAPI Docs        http://localhost:8001/docs${RESET}\n"
+            printf "  ${CYAN}PORTALES${RESET}\n"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal Publico (PHP)" "http://localhost"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal HTTPS (FastAPI)" "https://localhost:8443"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Admin .NET (CalidadSYS)" "http://localhost:5080"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "FastAPI Swagger" "http://localhost:8001/docs"
             echo
-            printf "  ${GRAY}→ PostgreSQL          localhost:5433${RESET}\n"
-            printf "  ${GRAY}→ MongoDB             localhost:27018${RESET}\n"
-            printf "  ${GRAY}→ SQL Server          localhost:1434${RESET}\n"
+            printf "  ${CYAN}BASES DE DATOS${RESET}\n"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "SQL Server" "localhost:1434"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "PostgreSQL" "localhost:5433"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "MongoDB" "localhost:27018"
             ;;
     esac
 
+    # ── Usuarios sembrados (solo si se ejecutó el seeder) ─────
+    if [ "${SKIP_ENV:-false}" = false ] && [ "${SEED_MODE:-dev}" != "none" ]; then
+        echo
+        printf "  %s\n" "$(printf '─%.0s' {1..58})"
+        printf "  ${CYAN}USUARIOS REGISTRADOS${RESET}  ${GRAY}(password: Calidad#2026Dev)${RESET}\n"
+        printf "  %s\n" "$(printf '─%.0s' {1..58})"
+        printf "  ${GRAY}%-14s %-38s %s${RESET}\n" "ROL" "EMAIL" "EMPRESA"
+        printf "  %s\n" "$(printf '─%.0s' {1..58})"
+        printf "  ${WHITE}%-14s${RESET} %-38s %s\n" "SuperAdmin"      "super@qualitydms.local"       "Global"
+        printf "  ${WHITE}%-14s${RESET} %-38s %s\n" "Admin"           "admin@qualitydms.local"       "ACME"
+        printf "  ${WHITE}%-14s${RESET} %-38s %s\n" "AdminEmpresa"    "adminempresa@qualitydms.local" "ACME"
+        printf "  ${WHITE}%-14s${RESET} %-38s %s\n" "QualityManager"  "calidad@qualitydms.local"     "ACME"
+        printf "  ${WHITE}%-14s${RESET} %-38s %s\n" "Approver"        "aprobador1@qualitydms.local"  "ACME"
+        printf "  ${WHITE}%-14s${RESET} %-38s %s\n" "Approver"        "aprobador2@qualitydms.local"  "ACME"
+        printf "  ${WHITE}%-14s${RESET} %-38s %s\n" "Author"          "autor@qualitydms.local"       "ACME"
+        printf "  ${WHITE}%-14s${RESET} %-38s %s\n" "Viewer"          "lector@qualitydms.local"      "ACME"
+        printf "  ${WHITE}%-14s${RESET} %-38s %s\n" "AdminEmpresa"    "admin.beta@qualitydms.local"  "BETA"
+
+        if [ "${SEED_MODE:-dev}" = "sandbox" ]; then
+            echo
+            printf "  ${CYAN}DATOS SANDBOX${RESET}\n"
+            printf "  ${GREEN}✓${RESET} 10,000 documentos generados en SQL Server\n"
+            printf "  ${GREEN}✓${RESET}  7,000 aprobados propagados a PostgreSQL y MongoDB\n"
+            printf "  ${GREEN}✓${RESET}  2,000 en revision  |  1,000 borradores\n"
+        fi
+    fi
+
     echo
-    _section_line
+    printf "  %s\n" "$line"
     echo
 }
 
