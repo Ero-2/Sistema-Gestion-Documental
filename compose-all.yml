@@ -151,6 +151,7 @@ services:
       PublicDms__WebhookUrl: http://fastapi:8000
       PublicDms__ApiKey: ${FASTAPI_API_KEY}
       PublicDms__PhpSyncUrl: http://php
+      DMS_SEED_MODE: ${DMS_SEED_MODE:-dev}
     ports:
       - "127.0.0.1:5080:8080"
     volumes:
@@ -254,9 +255,25 @@ services:
 # ══════════════════════════════════════════════════════════
 volumes:
   sqlserver_data:
+    driver: local
+    labels:
+      service: net
+      database: sqlserver
   postgres_data:
+    driver: local
+    labels:
+      service: php
+      database: postgresql
   mongo_data:
+    driver: local
+    labels:
+      service: indexer
+      database: mongodb
   uploads_data:
+    driver: local
+    labels:
+      service: shared
+      content: document-files
 
 # ══════════════════════════════════════════════════════════
 #  Red interna

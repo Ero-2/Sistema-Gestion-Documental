@@ -150,16 +150,19 @@ using (var scope = app.Services.CreateScope())
         }
     }
 
-    // Datos de prueba: solo en entorno de pruebas (Development).
-    if (app.Environment.IsDevelopment())
+    // DMS_SEED_MODE: sandbox → datos base + 10 000 docs | dev → datos base | none → sin seed
+    var seedMode = Environment.GetEnvironmentVariable("DMS_SEED_MODE") ?? "dev";
+    Console.WriteLine($"[DB] Seed mode: {seedMode}");
+
+    if (seedMode != "none")
     {
-        try
+        try { await DbSeeder.SeedAsync(scope.ServiceProvider); }
+        catch (Exception ex) { Console.WriteLine($"[DB] Seed base falló: {ex.Message}"); }
+
+        if (seedMode == "sandbox")
         {
-            await DbSeeder.SeedAsync(scope.ServiceProvider);
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[DB] Seed falló: {ex.Message}");
+            try { await DbSeeder.SeedSandboxAsync(scope.ServiceProvider); }
+            catch (Exception ex) { Console.WriteLine($"[DB] Seed sandbox falló: {ex.Message}"); }
         }
     }
 }

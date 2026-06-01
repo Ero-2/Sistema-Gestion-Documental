@@ -1,39 +1,31 @@
+using Bogus;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using QualityDMS.Domain.Entities;
 using QualityDMS.Domain.Enums;
+using QualityDMS.Domain.Interfaces;
 using QualityDMS.Infrastructure.Identity;
+using System.Diagnostics;
 
 namespace QualityDMS.Infrastructure.Persistence;
 
-/// <summary>
-/// Precarga datos de prueba para permitir pruebas funcionales inmediatas
-/// sin captura manual. Solo siembra en entorno de pruebas (Development).
-/// Idempotente: cada bloque se omite si la tabla ya tiene datos.
-///
-/// Los usuarios se crean con UserManager (passwords con hash) porque .NET es
-/// la única fuente de auth/roles del sistema (arquitectura desacoplada).
-/// </summary>
 public static class DbSeeder
 {
-    // Roles del sistema.
-    public const string RoleSuperAdmin     = "SuperAdmin";     // global, ve todas las empresas
-    public const string RoleCompanyAdmin   = "AdminEmpresa";   // administra solo su empresa
+    public const string RoleSuperAdmin     = "SuperAdmin";
+    public const string RoleCompanyAdmin   = "AdminEmpresa";
     public const string RoleAdmin          = "Admin";
     public const string RoleQualityManager = "QualityManager";
     public const string RoleApprover       = "Approver";
     public const string RoleAuthor         = "Author";
     public const string RoleViewer         = "Viewer";
 
-    // Password común de los usuarios de prueba.
-    // Cumple política Identity: >=12, mayúscula, dígito y símbolo.
     private const string SeedPassword = "Calidad#2026Dev";
+    private const string SeedBy       = "seed";
 
-    // Marcador de autoría para registros sembrados (CreatedBy es requerido).
-    private const string SeedBy = "seed";
-
+    // ── Punto de entrada: datos base (siempre) ───────────────────────────────
     public static async Task SeedAsync(IServiceProvider services)
     {
         var logger      = services.GetRequiredService<ILogger<QualityDMSDbContext>>();
@@ -51,18 +43,260 @@ public static class DbSeeder
         var template = await SeedWorkflowAsync(db, acme, logger);
         await SeedDocumentsAsync(db, userManager, acme, depts, cats, template, logger);
 
-        logger.LogInformation("DbSeeder: datos de prueba listos.");
+        logger.LogInformation("DbSeeder: datos base listos.");
     }
 
-    // ── Empresas (tenants) ───────────────────────────────────────────────────
+    // ── Punto de entrada: 10,000 documentos sandbox ──────────────────────────
+    public static async Task SeedSandboxAsync(IServiceProvider services)
+    {
+        var logger  = services.GetRequiredService<ILogger<QualityDMSDbContext>>();
+        var db      = services.GetRequiredService<QualityDMSDbContext>();
+        var config  = services.GetRequiredService<IConfiguration>();
+
+        // Idempotencia: si ya hay más de 20 documentos, el sandbox ya se sembró
+        if (await db.Documents.CountAsync() > 20)
+        {
+            logger.LogInformation("DbSeeder sandbox: ya sembrado, omitiendo.");
+            return;
+        }
+
+        const int Total       = 10_000;
+        const int BatchSize   = 500;
+        const int Concurrency = 50;
+
+        logger.LogInformation("DbSeeder sandbox: generando {Total} documentos...", Total);
+        var sw = Stopwatch.StartNew();
+
+        // Datos de referencia
+        var acme  = await db.Companies.FirstAsync(c => c.Code == "ACME");
+        var cats  = await db.DocumentCategories.Where(c => c.CompanyId == acme.CompanyId).ToListAsync();
+        var depts = await db.Departments.Where(d => d.CompanyId == acme.CompanyId).ToListAsync();
+        var autor   = await db.Users.FirstAsync(u => u.Email == "autor@qualitydms.local");
+        var gerente = await db.Users.FirstAsync(u => u.Email == "calidad@qualitydms.local");
+
+        var faker = new Faker("es");
+        var now   = DateTime.UtcNow;
+
+        // Recopila los documentos aprobados para llamar a las APIs luego
+        var approvedSnapshot = new List<ApprovedDocInfo>();
+
+        // ── Inserción en SQL Server por lotes ─────────────────────────────────
+        for (int batch = 0; batch < Total / BatchSize; batch++)
+        {
+            var docs = new List<Document>(BatchSize);
+
+            for (int i = 0; i < BatchSize; i++)
+            {
+                int idx  = batch * BatchSize + i + 1;
+                var cat  = faker.Random.ArrayElement(cats.ToArray());
+                var dept = faker.Random.ArrayElement(depts.ToArray());
+                var code = $"{cat.Code.Split('-')[0]}-{idx:D5}";
+
+                var doc = Document.Create(code, BuildTitle(faker, cat.Code, dept.Name),
+                    cat.CategoryId, dept.DepartmentId, autor.Id, acme.CompanyId);
+                doc.Description = faker.Lorem.Sentence(faker.Random.Int(6, 14));
+                doc.ClearDomainEvents();
+
+                // 70 % aprobado · 20 % en revisión · 10 % borrador
+                int roll = idx % 10;
+                if (roll < 7)
+                {
+                    doc.AddVersion(new DocumentVersion
+                    {
+                        VersionNumber = "0.1", IsCurrent = false, Status = VersionStatus.Draft,
+                        FilePath = $"seed/{code}-v0.1.pdf", FileName = $"{code}-v0.1.pdf",
+                        FileSizeBytes = 0, ContentType = "application/pdf",
+                        ChangeLog = "Borrador inicial (seed)", CreatedBy = autor.Id,
+                    });
+                    doc.AddVersion(new DocumentVersion
+                    {
+                        VersionNumber = "1.0", IsCurrent = true, Status = VersionStatus.Approved,
+                        FilePath = $"seed/{code}-v1.pdf", FileName = $"{code}-v1.pdf",
+                        FileSizeBytes = 0, ContentType = "application/pdf",
+                        ChangeLog = "Versión aprobada (seed)",
+                        ApprovedBy = gerente.Id, ApprovedAt = now.AddDays(-faker.Random.Int(1, 365)),
+                        CreatedBy = gerente.Id,
+                    });
+                    doc.RecalculateStatus();
+                    approvedSnapshot.Add(new ApprovedDocInfo(
+                        doc, cat.CategoryId, cat.Name, dept.DepartmentId, dept.Name,
+                        acme.CompanyId, acme.Name));
+                }
+                else if (roll < 9)
+                {
+                    doc.AddVersion(new DocumentVersion
+                    {
+                        VersionNumber = "0.1", IsCurrent = false, Status = VersionStatus.PendingApproval,
+                        FilePath = $"seed/{code}-v0.1.pdf", FileName = $"{code}-v0.1.pdf",
+                        FileSizeBytes = 0, ContentType = "application/pdf",
+                        ChangeLog = "En revisión (seed)", CreatedBy = autor.Id,
+                    });
+                    doc.RecalculateStatus();
+                }
+                else
+                {
+                    doc.AddVersion(new DocumentVersion
+                    {
+                        VersionNumber = "0.1", IsCurrent = false, Status = VersionStatus.Draft,
+                        FilePath = $"seed/{code}-v0.1.pdf", FileName = $"{code}-v0.1.pdf",
+                        FileSizeBytes = 0, ContentType = "application/pdf",
+                        ChangeLog = "Borrador inicial (seed)", CreatedBy = autor.Id,
+                    });
+                    doc.RecalculateStatus();
+                }
+
+                docs.Add(doc);
+            }
+
+            db.Documents.AddRange(docs);
+            await db.SaveChangesAsync();
+            logger.LogInformation("DbSeeder sandbox: lote {Batch}/{Total} → SQL Server ({Elapsed}s)",
+                batch + 1, Total / BatchSize, (int)sw.Elapsed.TotalSeconds);
+        }
+
+        logger.LogInformation("DbSeeder sandbox: {Count} docs insertados en SQL Server en {Elapsed}s. Propagando a PHP y FastAPI...",
+            Total, (int)sw.Elapsed.TotalSeconds);
+
+        // ── Esperar que PHP y FastAPI estén listos ────────────────────────────
+        await WaitForServicesAsync(config, logger);
+
+        // ── Propagar documentos aprobados a PHP y FastAPI vía APIs ────────────
+        var phpSync = services.GetRequiredService<IPhpSyncService>();
+        var webhook = services.GetRequiredService<IPublicDmsWebhookService>();
+
+        // Re-query para obtener DocumentId (asignado por SQL Server al guardar)
+        var approvedIds = approvedSnapshot.Select(a => a.Doc.DocumentId).ToHashSet();
+        var dbDocs = await db.Documents
+            .Where(d => approvedIds.Contains(d.DocumentId))
+            .ToListAsync();
+
+        int apiSuccess = 0, apiFail = 0;
+        var sem = new SemaphoreSlim(Concurrency);
+
+        await Parallel.ForEachAsync(approvedSnapshot, new ParallelOptions { MaxDegreeOfParallelism = Concurrency },
+            async (info, ct) =>
+            {
+                await sem.WaitAsync(ct);
+                try
+                {
+                    var fileUrl = $"seed/{info.Doc.Code}-v1.pdf";
+                    var effective = now.AddDays(-faker.Random.Int(1, 180));
+
+                    await phpSync.ApproveDocumentAsync(
+                        info.Doc.DocumentId, info.Doc.Code, info.Doc.Title,
+                        info.CategoryId, info.CategoryName,
+                        info.DepartmentId, info.DepartmentName,
+                        "1.0", fileUrl, effective, null, effective,
+                        info.CompanyId, info.CompanyName);
+
+                    await webhook.NotifyDocumentApprovedAsync(
+                        info.Doc.DocumentId, info.Doc.Code, info.Doc.Title,
+                        info.CategoryName, info.DepartmentName,
+                        "1.0", fileUrl, info.CompanyId, info.CompanyName);
+
+                    Interlocked.Increment(ref apiSuccess);
+                }
+                catch
+                {
+                    Interlocked.Increment(ref apiFail);
+                }
+                finally
+                {
+                    sem.Release();
+                }
+            });
+
+        logger.LogInformation(
+            "DbSeeder sandbox: completo en {Elapsed}s — {Ok} docs propagados, {Fail} fallos de API.",
+            (int)sw.Elapsed.TotalSeconds, apiSuccess, apiFail);
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private record ApprovedDocInfo(
+        Document Doc,
+        int CategoryId, string CategoryName,
+        int DepartmentId, string DepartmentName,
+        int CompanyId, string CompanyName);
+
+    private static string BuildTitle(Faker faker, string catCode, string deptName)
+    {
+        string[] topics =
+        [
+            "Calidad", "Seguridad Industrial", "Gestión de Riesgos",
+            "Control de Documentos", "Capacitación del Personal",
+            "Auditoría Interna", "Control de Proveedores",
+            "No Conformidades", "Mejora Continua", "Control de Equipos",
+            "Gestión Ambiental", "Salud Ocupacional", "Control de Cambios",
+            "Gestión de Proyectos", "Control de Registros",
+            "Evaluación de Desempeño", "Comunicación Interna",
+            "Gestión de Clientes", "Control de Producción", "Mantenimiento Preventivo",
+            "Gestión de Compras", "Control de Inventarios",
+            "Seguridad de la Información", "Gestión de Contratos",
+            "Validación de Procesos", "Gestión de Recursos",
+            "Planificación Estratégica", "Control de Costos",
+            "Gestión de Quejas", "Evaluación de Proveedores",
+            "Equipos de Medición", "Gestión de Competencias",
+            "Análisis de Datos", "Revisión por la Dirección", "Trazabilidad",
+        ];
+
+        var prefix = catCode.Split('-')[0] switch
+        {
+            "POL" => "Política",
+            "PRO" => "Procedimiento",
+            "INS" => "Instructivo",
+            "FOR" => "Formato",
+            _     => "Documento",
+        };
+
+        var topic = faker.Random.ArrayElement(topics);
+        return faker.Random.Bool(0.35f)
+            ? $"{prefix} de {topic} — {deptName}"
+            : $"{prefix} de {topic}";
+    }
+
+    private static async Task WaitForServicesAsync(IConfiguration config, ILogger logger)
+    {
+        var fastapiUrl = config["PublicDms:WebhookUrl"] ?? "http://fastapi:8000";
+        var phpUrl     = config["PublicDms:PhpSyncUrl"] ?? "http://php";
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+        await PollUntilReachableAsync(http, $"{fastapiUrl}/health", "FastAPI", logger);
+        await PollUntilReachableAsync(http, phpUrl, "PHP",           logger);
+    }
+
+    private static async Task PollUntilReachableAsync(
+        HttpClient http, string url, string name, ILogger logger, int maxSecs = 90)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < maxSecs)
+        {
+            try
+            {
+                var r = await http.GetAsync(url);
+                if ((int)r.StatusCode < 500)
+                {
+                    logger.LogInformation("DbSeeder: {Name} listo ({Elapsed}s)", name, (int)sw.Elapsed.TotalSeconds);
+                    return;
+                }
+            }
+            catch { /* todavía arrancando */ }
+
+            await Task.Delay(3_000);
+        }
+        logger.LogWarning("DbSeeder: {Name} no respondió en {Max}s — las llamadas API pueden fallar.", name, maxSecs);
+    }
+
+    // ── Datos base ────────────────────────────────────────────────────────────
+
     private static async Task<Dictionary<string, int>> SeedCompaniesAsync(
         QualityDMSDbContext db, ILogger logger)
     {
         if (!await db.Companies.AnyAsync())
         {
             db.Companies.AddRange(
-                new Company { Code = "ACME", Name = "ACME Corporation",  TaxId = "ACME-900100", CreatedBy = SeedBy },
-                new Company { Code = "BETA", Name = "Beta Industries",    TaxId = "BETA-900200", CreatedBy = SeedBy }
+                new Company { Code = "ACME", Name = "ACME Corporation", TaxId = "ACME-900100", CreatedBy = SeedBy },
+                new Company { Code = "BETA", Name = "Beta Industries",   TaxId = "BETA-900200", CreatedBy = SeedBy }
             );
             await db.SaveChangesAsync();
             logger.LogInformation("DbSeeder: empresas sembradas (ACME, BETA)");
@@ -70,7 +304,6 @@ public static class DbSeeder
         return await db.Companies.ToDictionaryAsync(c => c.Code, c => c.CompanyId);
     }
 
-    // ── Roles ──────────────────────────────────────────────────────────────
     private static async Task SeedRolesAsync(RoleManager<IdentityRole> roleManager, ILogger logger)
     {
         string[] roles = [RoleSuperAdmin, RoleCompanyAdmin, RoleAdmin, RoleQualityManager, RoleApprover, RoleAuthor, RoleViewer];
@@ -84,7 +317,6 @@ public static class DbSeeder
         }
     }
 
-    // ── Departamentos ───────────────────────────────────────────────────────
     private static async Task<Dictionary<string, int>> SeedDepartmentsAsync(
         QualityDMSDbContext db, int companyId, ILogger logger)
     {
@@ -99,28 +331,25 @@ public static class DbSeeder
             await db.SaveChangesAsync();
             logger.LogInformation("DbSeeder: departamentos sembrados");
         }
-
         return await db.Departments.Where(d => d.CompanyId == companyId)
                                     .ToDictionaryAsync(d => d.Name, d => d.DepartmentId);
     }
 
-    // ── Usuarios ────────────────────────────────────────────────────────────
     private static async Task SeedUsersAsync(
         UserManager<ApplicationUser> userManager, int acmeId, int betaId,
         Dictionary<string, int> depts, ILogger logger)
     {
-        // CompanyId null = SuperAdmin global (sin tenant). El resto pertenece a una empresa.
         (string Email, string First, string Last, string Dept, string Role, int? Company)[] users =
         [
-            ("super@qualitydms.local",      "Super",         "Admin",       "",                 RoleSuperAdmin,     null),
-            ("admin@qualitydms.local",      "Administrador", "del Sistema", "Calidad",          RoleAdmin,          acmeId),
-            ("adminempresa@qualitydms.local","Admin",        "ACME",        "Calidad",          RoleCompanyAdmin,   acmeId),
-            ("calidad@qualitydms.local",    "Gerente",       "de Calidad",  "Calidad",          RoleQualityManager, acmeId),
-            ("aprobador1@qualitydms.local", "Juan",          "Pérez",       "Calidad",          RoleApprover,       acmeId),
-            ("aprobador2@qualitydms.local", "María",         "García",      "Operaciones",      RoleApprover,       acmeId),
-            ("autor@qualitydms.local",      "Carlos",        "López",       "Operaciones",      RoleAuthor,         acmeId),
-            ("lector@qualitydms.local",     "Ana",           "Torres",      "Recursos Humanos", RoleViewer,         acmeId),
-            ("admin.beta@qualitydms.local", "Admin",         "Beta",        "",                 RoleCompanyAdmin,   betaId),
+            ("super@qualitydms.local",       "Super",          "Admin",        "",                 RoleSuperAdmin,     null),
+            ("admin@qualitydms.local",       "Administrador",  "del Sistema",  "Calidad",          RoleAdmin,          acmeId),
+            ("adminempresa@qualitydms.local","Admin",           "ACME",         "Calidad",          RoleCompanyAdmin,   acmeId),
+            ("calidad@qualitydms.local",     "Gerente",        "de Calidad",   "Calidad",          RoleQualityManager, acmeId),
+            ("aprobador1@qualitydms.local",  "Juan",           "Pérez",        "Calidad",          RoleApprover,       acmeId),
+            ("aprobador2@qualitydms.local",  "María",          "García",       "Operaciones",      RoleApprover,       acmeId),
+            ("autor@qualitydms.local",       "Carlos",         "López",        "Operaciones",      RoleAuthor,         acmeId),
+            ("lector@qualitydms.local",      "Ana",            "Torres",       "Recursos Humanos", RoleViewer,         acmeId),
+            ("admin.beta@qualitydms.local",  "Admin",          "Beta",         "",                 RoleCompanyAdmin,   betaId),
         ];
 
         foreach (var (email, first, last, dept, role, company) in users)
@@ -153,7 +382,6 @@ public static class DbSeeder
         }
     }
 
-    // ── Categorías ──────────────────────────────────────────────────────────
     private static async Task<Dictionary<string, int>> SeedCategoriesAsync(
         QualityDMSDbContext db, int companyId, ILogger logger)
     {
@@ -167,7 +395,6 @@ public static class DbSeeder
             );
             await db.SaveChangesAsync();
 
-            // Subcategoría para mostrar jerarquía (ParentCategoryId).
             var procId = await db.DocumentCategories.Where(c => c.CompanyId == companyId && c.Code == "PRO")
                                                     .Select(c => c.CategoryId).FirstAsync();
             db.DocumentCategories.Add(new DocumentCategory
@@ -183,7 +410,6 @@ public static class DbSeeder
                                           .ToDictionaryAsync(c => c.Name, c => c.CategoryId);
     }
 
-    // ── Flujo de aprobación ───────────────────────────────────────────────────
     private static async Task<WorkflowTemplate> SeedWorkflowAsync(
         QualityDMSDbContext db, int companyId, ILogger logger)
     {
@@ -200,8 +426,8 @@ public static class DbSeeder
             CreatedBy   = SeedBy,
             Steps =
             {
-                new WorkflowStep { StepOrder = 1, StepName = "Revisión Técnica",  AssignedRoleName = RoleApprover,       CreatedBy = SeedBy },
-                new WorkflowStep { StepOrder = 2, StepName = "Aprobación Final",   AssignedRoleName = RoleQualityManager, CreatedBy = SeedBy },
+                new WorkflowStep { StepOrder = 1, StepName = "Revisión Técnica", AssignedRoleName = RoleApprover,       CreatedBy = SeedBy },
+                new WorkflowStep { StepOrder = 2, StepName = "Aprobación Final", AssignedRoleName = RoleQualityManager, CreatedBy = SeedBy },
             },
         };
 
@@ -211,7 +437,6 @@ public static class DbSeeder
         return template;
     }
 
-    // ── Documentos + versiones + estados + flujo ───────────────────────────────
     private static async Task SeedDocumentsAsync(
         QualityDMSDbContext db,
         UserManager<ApplicationUser> userManager,
@@ -230,42 +455,23 @@ public static class DbSeeder
         var authorId  = autor?.Id ?? admin!.Id;
         var now       = DateTime.UtcNow;
 
-        // 1) Documento APROBADO: borrador 0.1 (historial) + versión vigente 1.0 (sellada).
+        // 1) Aprobado — borrador 0.1 + versión vigente 1.0
         var pol = Document.Create("POL-001", "Política de Calidad",
             cats["Políticas"], depts["Calidad"], authorId, companyId);
         pol.Description = "Política general del sistema de gestión de calidad";
         pol.WorkflowTemplateId = template.WorkflowTemplateId;
         pol.ClearDomainEvents();
-
-        var polDraft = new DocumentVersion
-        {
-            VersionNumber = "0.1", FilePath = "seed/POL-001-v0.1.pdf", FileName = "POL-001-v0.1.pdf",
-            FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Borrador inicial",
-            Status = VersionStatus.Draft, IsCurrent = false, CreatedBy = authorId,
-        };
-        var polApproved = new DocumentVersion
-        {
-            VersionNumber = "1.0", FilePath = "seed/POL-001-v1.pdf", FileName = "POL-001-v1.pdf",
-            FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Versión aprobada inicial",
-            Status = VersionStatus.Approved, IsCurrent = true,
-            ApprovedBy = gerente!.Id, ApprovedAt = now, CreatedBy = gerente.Id,
-        };
-        pol.AddVersion(polDraft);
-        pol.AddVersion(polApproved);
-        pol.RecalculateStatus();          // → Approved, EffectiveDate = now
+        pol.AddVersion(new DocumentVersion { VersionNumber = "0.1", FilePath = "seed/POL-001-v0.1.pdf", FileName = "POL-001-v0.1.pdf", FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Borrador inicial", Status = VersionStatus.Draft, IsCurrent = false, CreatedBy = authorId });
+        pol.AddVersion(new DocumentVersion { VersionNumber = "1.0", FilePath = "seed/POL-001-v1.pdf",   FileName = "POL-001-v1.pdf",   FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Versión aprobada", Status = VersionStatus.Approved, IsCurrent = true, ApprovedBy = gerente!.Id, ApprovedAt = now, CreatedBy = gerente.Id });
+        pol.RecalculateStatus();
         db.Documents.Add(pol);
         await db.SaveChangesAsync();
 
-        // Flujo completado (la instancia revisó el borrador 0.1 que se selló a 1.0).
         db.WorkflowInstances.Add(new WorkflowInstance
         {
-            DocumentId         = pol.DocumentId,
-            DocumentVersionId  = polDraft.VersionId,
-            WorkflowTemplateId = template.WorkflowTemplateId,
-            CurrentStepOrder   = 2,
-            Status             = WorkflowStepStatus.Approved,
-            CompletedAt        = now,
-            CreatedBy          = SeedBy,
+            DocumentId = pol.DocumentId, DocumentVersionId = pol.Versions.First(v => v.VersionNumber == "0.1").VersionId,
+            WorkflowTemplateId = template.WorkflowTemplateId, CurrentStepOrder = 2,
+            Status = WorkflowStepStatus.Approved, CompletedAt = now, CreatedBy = SeedBy,
             Actions =
             {
                 new WorkflowAction { StepOrder = 1, ActionByUserId = aprobador!.Id, Action = WorkflowStepStatus.Approved, Comments = "Revisión técnica conforme", ActionDate = now, CreatedBy = SeedBy },
@@ -274,52 +480,35 @@ public static class DbSeeder
         });
         await db.SaveChangesAsync();
 
-        // 2) Documento EN REVISIÓN: borrador 0.1 en estado PendingApproval, flujo en paso 1.
+        // 2) En revisión — borrador 0.1 en PendingApproval
         var pro = Document.Create("PRO-001", "Procedimiento de Control de Documentos",
             cats["Procedimientos"], depts["Calidad"], authorId, companyId);
         pro.Description = "Procedimiento para creación, revisión y aprobación de documentos";
         pro.WorkflowTemplateId = template.WorkflowTemplateId;
         pro.ClearDomainEvents();
-
-        var proDraft = new DocumentVersion
-        {
-            VersionNumber = "0.1", FilePath = "seed/PRO-001-v0.1.pdf", FileName = "PRO-001-v0.1.pdf",
-            FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Borrador inicial",
-            Status = VersionStatus.PendingApproval, IsCurrent = false, CreatedBy = authorId,
-        };
-        pro.AddVersion(proDraft);
-        pro.RecalculateStatus();          // → PendingApproval
+        pro.AddVersion(new DocumentVersion { VersionNumber = "0.1", FilePath = "seed/PRO-001-v0.1.pdf", FileName = "PRO-001-v0.1.pdf", FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Borrador inicial", Status = VersionStatus.PendingApproval, IsCurrent = false, CreatedBy = authorId });
+        pro.RecalculateStatus();
         db.Documents.Add(pro);
         await db.SaveChangesAsync();
 
         db.WorkflowInstances.Add(new WorkflowInstance
         {
-            DocumentId         = pro.DocumentId,
-            DocumentVersionId  = proDraft.VersionId,
-            WorkflowTemplateId = template.WorkflowTemplateId,
-            CurrentStepOrder   = 1,
-            Status             = WorkflowStepStatus.InProgress,
-            CreatedBy          = SeedBy,
+            DocumentId = pro.DocumentId, DocumentVersionId = pro.Versions.First().VersionId,
+            WorkflowTemplateId = template.WorkflowTemplateId, CurrentStepOrder = 1,
+            Status = WorkflowStepStatus.InProgress, CreatedBy = SeedBy,
         });
         await db.SaveChangesAsync();
 
-        // 3) Documento BORRADOR: solo 0.1 en Draft (nunca publicado).
+        // 3) Borrador puro
         var ins = Document.Create("INS-001", "Instructivo de Respaldos",
             cats["Instructivos"], depts["Tecnología"], authorId, companyId);
         ins.Description = "Instructivo para respaldo de información en TI";
         ins.ClearDomainEvents();
-
-        var insDraft = new DocumentVersion
-        {
-            VersionNumber = "0.1", FilePath = "seed/INS-001-v0.1.pdf", FileName = "INS-001-v0.1.pdf",
-            FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Borrador inicial",
-            Status = VersionStatus.Draft, IsCurrent = false, CreatedBy = authorId,
-        };
-        ins.AddVersion(insDraft);
-        ins.RecalculateStatus();          // → Draft
+        ins.AddVersion(new DocumentVersion { VersionNumber = "0.1", FilePath = "seed/INS-001-v0.1.pdf", FileName = "INS-001-v0.1.pdf", FileSizeBytes = 0, ContentType = "application/pdf", ChangeLog = "Borrador inicial", Status = VersionStatus.Draft, IsCurrent = false, CreatedBy = authorId });
+        ins.RecalculateStatus();
         db.Documents.Add(ins);
         await db.SaveChangesAsync();
 
-        logger.LogInformation("DbSeeder: 3 documentos (Approved 1.0 / PendingApproval 0.1 / Draft 0.1) con versiones e historial");
+        logger.LogInformation("DbSeeder: 3 documentos base (Approved / PendingApproval / Draft)");
     }
 }

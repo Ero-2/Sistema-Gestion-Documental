@@ -1,0 +1,107 @@
+# ══════════════════════════════════════════════════════════
+#  Stack 1 — .NET Core + SQL Server
+#  Arrancar:   docker compose --env-file .env.net -f compose-net.yml up -d --build
+#  Detener:    docker compose -f compose-net.yml down
+# ══════════════════════════════════════════════════════════
+
+services:
+
+  # ──────────────────────────────────────────────────────
+  # SQL Server 2022 — Base de datos maestra (CalidadSYS)
+  # ──────────────────────────────────────────────────────
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: dms_sqlserver
+    environment:
+      SA_PASSWORD:  ${MSSQL_SA_PASSWORD}
+      ACCEPT_EULA:  "Y"
+      MSSQL_PID:    Developer
+    ports:
+      - "127.0.0.1:1434:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL",
+             "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P '${MSSQL_SA_PASSWORD}' -Q 'SELECT 1' -No || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
+    networks:
+      - net_internal
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+
+  # ──────────────────────────────────────────────────────
+  # .NET Core 10 — Sistema central (CalidadSYS)
+  # Envía eventos a PHP y FastAPI via HTTP; no accede
+  # directamente a PostgreSQL ni MongoDB.
+  # ──────────────────────────────────────────────────────
+  dotnet:
+    build:
+      context: ./src/dotnet-core
+    container_name: dms_dotnet
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS:         http://+:8080
+      ConnectionStrings__QualityDMS: >-
+        Server=sqlserver,1433;Database=${MSSQL_DB:-QualityDMS};
+        User Id=sa;Password=${MSSQL_SA_PASSWORD};
+        TrustServerCertificate=True;MultipleActiveResultSets=True
+      Storage__LocalPath:      /app/uploads
+      PublicDms__WebhookUrl:   ${FASTAPI_WEBHOOK_URL:-http://fastapi:8000}
+      PublicDms__ApiKey:       ${FASTAPI_API_KEY}
+      PublicDms__PhpSyncUrl:   ${PHP_WEBHOOK_URL:-http://php}
+      DMS_SEED_MODE:           ${DMS_SEED_MODE:-dev}
+    ports:
+      - "127.0.0.1:5080:8080"
+    volumes:
+      - ./data/uploads:/app/uploads
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    networks:
+      - net_internal
+      - dms_backbone
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+
+# ══════════════════════════════════════════════════════════
+#  Volúmenes
+# ══════════════════════════════════════════════════════════
+volumes:
+  sqlserver_data:
+    driver: local
+    labels:
+      service: net
+      database: sqlserver
+
+# ══════════════════════════════════════════════════════════
+#  Redes
+#  net_internal  — aislada: solo sqlserver + dotnet
+#  dms_backbone  — externa compartida: permite a dotnet
+#                  llamar a php y fastapi por nombre de servicio
+# ══════════════════════════════════════════════════════════
+networks:
+  net_internal:
+    driver: bridge
+  dms_backbone:
+    external: true

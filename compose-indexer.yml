@@ -1,0 +1,112 @@
+# ══════════════════════════════════════════════════════════
+#  Stack 3 — FastAPI + MongoDB (Motor de búsqueda)
+#  Arrancar:   docker compose --env-file .env.indexer -f compose-indexer.yml up -d --build
+#  Detener:    docker compose -f compose-indexer.yml down
+# ══════════════════════════════════════════════════════════
+
+services:
+
+  # ──────────────────────────────────────────────────────
+  # MongoDB 7 — Índice de búsqueda full-text
+  # Solo accesible desde indexer_internal.
+  # ──────────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: dms_mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-mongoadmin}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE:      dms_metadata
+    ports:
+      - "127.0.0.1:27018:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./db/mongo:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - indexer_internal
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  # ──────────────────────────────────────────────────────
+  # FastAPI (Python 3.12) — Indexación y búsqueda
+  # Recibe eventos HTTP desde .NET y sincroniza con MongoDB.
+  # POSTGRES_* expuesto para documents_sync.py (acceso
+  # cross-stack a la BD del stack PHP).
+  # ──────────────────────────────────────────────────────
+  fastapi:
+    build:
+      context: ./src/python-service
+    container_name: dms_fastapi
+    environment:
+      MONGO_URL:         mongodb://${MONGO_USER:-mongoadmin}:${MONGO_PASSWORD}@mongodb:27017/?authSource=admin
+      DATABASE_NAME:     dms_metadata
+      FASTAPI_API_KEY:   ${FASTAPI_API_KEY}
+      JWT_SECRET:        ${JWT_SECRET}
+      DOTNET_API_URL:    ${DOTNET_API_URL:-http://dotnet:8080}
+      DMS_STORAGE_PATH:  /app/uploads
+      # PostgreSQL cross-stack — usado por documents_sync.py
+      # En despliegue multi-servidor: apuntar a la IP/hostname del servidor PHP
+      POSTGRES_HOST:     ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT:     ${POSTGRES_PORT:-5432}
+      POSTGRES_DB:       ${POSTGRES_DB:-PublicDMS}
+      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./data/uploads:/app/uploads:ro
+    ports:
+      - "127.0.0.1:8001:8000"
+    expose:
+      - "8000"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - indexer_internal
+      - dms_backbone
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+# ══════════════════════════════════════════════════════════
+#  Volúmenes
+# ══════════════════════════════════════════════════════════
+volumes:
+  mongo_data:
+    driver: local
+    labels:
+      service: indexer
+      database: mongodb
+
+# ══════════════════════════════════════════════════════════
+#  Redes
+#  indexer_internal — aislada: solo mongodb + fastapi
+#  dms_backbone     — externa compartida: fastapi se comunica
+#                     con dotnet y php por nombre de servicio
+# ══════════════════════════════════════════════════════════
+networks:
+  indexer_internal:
+    driver: bridge
+  dms_backbone:
+    external: true

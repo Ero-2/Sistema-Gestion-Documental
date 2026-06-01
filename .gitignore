@@ -23,6 +23,12 @@ src/php-app/sync/ultimo_sync.txt
 
 # Environment
 .env
+.env.net
+.env.php
+.env.indexer
+
+# Uploads compartidos (bind mount host — generado en runtime)
+data/
 
 # Installer runtime output
 logs/

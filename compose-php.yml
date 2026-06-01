@@ -1,0 +1,133 @@
+# ══════════════════════════════════════════════════════════
+#  Stack 2 — PHP + PostgreSQL + Nginx
+#  Arrancar:   docker compose --env-file .env.php -f compose-php.yml up -d --build
+#  Detener:    docker compose -f compose-php.yml down
+# ══════════════════════════════════════════════════════════
+
+services:
+
+  # ──────────────────────────────────────────────────────
+  # PostgreSQL 16 — Read model del portal público (PublicDMS)
+  # Solo accesible desde php_internal; nunca expuesto a
+  # dotnet ni fastapi directamente.
+  # ──────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: dms_postgres
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-PublicDMS}
+      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-PublicDMS}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - php_internal
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  # ──────────────────────────────────────────────────────
+  # PHP 8.3 + Apache — Portal público de consulta documental
+  # Consume eventos HTTP desde .NET (api/events.php).
+  # No accede a SQL Server.
+  # ──────────────────────────────────────────────────────
+  php:
+    build:
+      context: ./src/php-app
+    container_name: dms_php
+    environment:
+      POSTGRES_HOST:     postgres
+      POSTGRES_DB:       ${POSTGRES_DB:-PublicDMS}
+      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DMS_STORAGE_PATH:  /var/dms/uploads
+      FASTAPI_URL:       ${FASTAPI_URL:-http://fastapi:8000}
+      FASTAPI_API_KEY:   ${FASTAPI_API_KEY}
+      DOTNET_API_URL:    ${DOTNET_API_URL:-http://dotnet:8080}
+    ports:
+      - "127.0.0.1:8082:80"
+    volumes:
+      - ./data/uploads:/var/dms/uploads:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - php_internal
+      - dms_backbone
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+  # ──────────────────────────────────────────────────────
+  # Nginx — Reverse proxy público
+  # Puerto 80  → PHP
+  # Puerto 443 → FastAPI (vía dms_backbone)
+  # ──────────────────────────────────────────────────────
+  nginx:
+    build:
+      context: ./docker/nginx
+    container_name: dms_nginx
+    ports:
+      - "80:80"
+      - "8443:443"
+    depends_on:
+      - php
+    networks:
+      - dms_backbone
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
+# ══════════════════════════════════════════════════════════
+#  Volúmenes
+# ══════════════════════════════════════════════════════════
+volumes:
+  postgres_data:
+    driver: local
+    labels:
+      service: php
+      database: postgresql
+
+# ══════════════════════════════════════════════════════════
+#  Redes
+#  php_internal  — aislada: solo postgres + php
+#  dms_backbone  — externa compartida: php y nginx se comunican
+#                  con dotnet y fastapi por nombre de servicio
+# ══════════════════════════════════════════════════════════
+networks:
+  php_internal:
+    driver: bridge
+  dms_backbone:
+    external: true

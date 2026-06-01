@@ -2,8 +2,6 @@
 # Service healthcheck framework with retry and timeout
 
 # wait_for_service <display_name> <container_name> [timeout_secs]
-#   Containers WITH healthcheck  → waits for "healthy"
-#   Containers WITHOUT healthcheck → waits for state "running"
 wait_for_service() {
     local name="$1"
     local container="$2"
@@ -22,7 +20,6 @@ wait_for_service() {
         state=$(docker inspect --format='{{.State.Status}}' \
                     "$container" 2>/dev/null || echo "unknown")
 
-        # If container has a healthcheck, require healthy
         if [ -n "$health" ]; then
             case "$health" in
                 healthy)
@@ -38,7 +35,6 @@ wait_for_service() {
                     ;;
             esac
         else
-            # No healthcheck — just need it running
             case "$state" in
                 running)
                     local dur=$(( $(date +%s) - start_ts ))
@@ -64,29 +60,45 @@ wait_for_service() {
 }
 
 wait_all_services() {
-    log_step "Waiting for services"
-    log_info "SQL Server may take up to 90s on first boot."
+    log_step "Waiting for services  ${GRAY}[stack: ${STACK:-all}]${RESET}"
     echo
 
     local failed=0
 
-    # Services with healthchecks defined in docker-compose.yml
-    wait_for_service "SQL Server"  dms_sqlserver 120 || failed=1
-    wait_for_service "PostgreSQL"  dms_postgres   60  || failed=1
-    wait_for_service "MongoDB"     dms_mongodb    60  || failed=1
-
-    # Services without healthchecks — just need to be running
-    wait_for_service "FastAPI"     dms_fastapi    60  || failed=1
-    wait_for_service "PHP/Apache"  dms_php        60  || failed=1
-    wait_for_service ".NET Core"   dms_dotnet     90  || failed=1
-    wait_for_service "Nginx"       dms_nginx      30  || failed=1
+    case "${STACK:-all}" in
+        net)
+            log_info "SQL Server may take up to 90s on first boot."
+            echo
+            wait_for_service "SQL Server"  dms_sqlserver 120 || failed=1
+            wait_for_service ".NET Core"   dms_dotnet     90 || failed=1
+            ;;
+        php)
+            wait_for_service "PostgreSQL"  dms_postgres   60 || failed=1
+            wait_for_service "PHP/Apache"  dms_php        60 || failed=1
+            wait_for_service "Nginx"       dms_nginx      30 || failed=1
+            ;;
+        indexer)
+            wait_for_service "MongoDB"     dms_mongodb    60 || failed=1
+            wait_for_service "FastAPI"     dms_fastapi    60 || failed=1
+            ;;
+        all|*)
+            log_info "SQL Server may take up to 90s on first boot."
+            echo
+            wait_for_service "SQL Server"  dms_sqlserver 120 || failed=1
+            wait_for_service "PostgreSQL"  dms_postgres   60 || failed=1
+            wait_for_service "MongoDB"     dms_mongodb    60 || failed=1
+            wait_for_service "FastAPI"     dms_fastapi    60 || failed=1
+            wait_for_service "PHP/Apache"  dms_php        60 || failed=1
+            wait_for_service ".NET Core"   dms_dotnet     90 || failed=1
+            wait_for_service "Nginx"       dms_nginx      30 || failed=1
+            ;;
+    esac
 
     echo
 
     if [ "$failed" -ne 0 ]; then
         log_warn "One or more services failed to start."
         log_warn "Run: docker compose logs -f to diagnose."
-        log_warn "Installation may still be partially functional."
     else
         log_ok "All services healthy"
     fi
