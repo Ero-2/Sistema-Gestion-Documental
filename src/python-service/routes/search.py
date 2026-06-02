@@ -248,40 +248,51 @@ body {
 }
 .reg-row {
   padding: 13px 14px; border-bottom: 1px solid var(--bd-1);
-  cursor: pointer; transition: background .1s ease;
+  transition: background .1s ease;
   border-left: 2px solid transparent;
 }
 .reg-row:hover { background: var(--hover); border-left-color: var(--accent); }
-/* Metadata expand panel */
+/* ── Metadata expand panel ────────────────────────────────── */
 .meta-panel {
-  display: none; background: var(--surface-2);
+  display: none; flex-direction: column; gap: 12px;
+  background: var(--surface-2);
   border-bottom: 1px solid var(--bd-2); border-left: 2px solid var(--accent);
-  padding: 14px 20px 16px; gap: 16px;
+  padding: 14px 20px 16px;
 }
 .meta-panel.open { display: flex; }
-.meta-actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
-.btn-view {
+/* fila superior: botones de acción */
+.mp-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.mp-btn-view {
   font-family: var(--mono); font-size: 12px; color: #fff;
   background: #0284c7; border: none; border-radius: 4px;
-  padding: 7px 14px; cursor: pointer; white-space: nowrap;
+  padding: 7px 16px; cursor: pointer;
 }
-.btn-view:hover { background: #0369a1; }
-.btn-dl {
+.mp-btn-view:hover { background: #0369a1; }
+.mp-btn-dl {
   font-family: var(--mono); font-size: 12px; color: var(--tx-1);
   background: transparent; border: 1px solid var(--bd-2);
-  border-radius: 4px; padding: 7px 14px; cursor: pointer; white-space: nowrap;
+  border-radius: 4px; padding: 7px 16px; cursor: pointer;
 }
-.btn-dl:hover { border-color: var(--bd-3); }
+.mp-btn-dl:hover { border-color: var(--bd-3); color: var(--tx-1); }
 .sim-badge {
   font-family: var(--mono); font-size: 10px; color: #7dd3fc;
   background: #1c3045; border: 1px solid #1e4060;
-  border-radius: 4px; padding: 4px 10px; text-align: center;
+  border-radius: 4px; padding: 4px 10px;
 }
+/* fila de summary de campos clave */
+.mp-summary {
+  display: flex; gap: 20px; flex-wrap: wrap;
+  font-family: var(--mono); font-size: 11px; color: var(--tx-3);
+}
+.mp-summary .kv { display: flex; flex-direction: column; gap: 2px; }
+.mp-summary .k { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--tx-4); }
+.mp-summary .v { color: var(--tx-2); }
+/* JSON pre */
 .meta-json {
-  flex: 1; font-family: var(--mono); font-size: 11px; color: var(--tx-2);
+  font-family: var(--mono); font-size: 11px; color: var(--tx-2);
   background: var(--surface-1); border: 1px solid var(--bd-1);
   border-radius: 4px; padding: 10px 14px;
-  max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+  max-height: 220px; overflow: auto; white-space: pre-wrap; word-break: break-word;
 }
 
 .c-code { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent); letter-spacing: -0.01em; }
@@ -298,11 +309,15 @@ body {
 .s-on  { color: var(--vigente); }
 .s-off .led { background: var(--inactivo); }
 .s-off { color: var(--inactivo); }
-.c-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
-.c-actions button { font-family: var(--mono); font-size: 11px; border-radius: 4px; padding: 5px 9px; cursor: pointer; border: 1px solid var(--bd-2); background: transparent; color: var(--tx-2); transition: all .1s; }
-.c-actions button:hover { border-color: var(--accent); color: var(--accent); }
-.c-actions .btn-p { background: #0284c7; border-color: #0284c7; color: #fff; }
-.c-actions .btn-p:hover { background: #0369a1; }
+.c-actions { display: flex; gap: 5px; align-items: center; justify-content: flex-end; }
+/* botones de acción por fila */
+.ab { font-family: var(--mono); font-size: 11px; border-radius: 4px; padding: 5px 8px; cursor: pointer; border: 1px solid var(--bd-2); background: transparent; color: var(--tx-2); transition: all .12s; white-space: nowrap; }
+.ab:hover { border-color: var(--bd-3); color: var(--tx-1); }
+.ab-view { background: rgba(2,132,199,0.12); border-color: rgba(2,132,199,0.5); color: #7dd3fc; }
+.ab-view:hover { background: rgba(2,132,199,0.25); border-color: #0284c7; }
+.ab-dl:hover { border-color: var(--accent); color: var(--accent); }
+.ab-meta { font-size: 10px; letter-spacing: 0.04em; }
+.ab-meta.open { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 .idx-flag { font-family: var(--mono); font-size: 10px; color: var(--tx-4); }
 .idx-flag.on { color: var(--accent); }
 .idx-flag.sim { color: #7dd3fc; }
@@ -478,6 +493,7 @@ function filterDept(el, dept) {
 }
 
 let _expandedIdx = null;
+let _files = [];   // _files[i] = file_name del doc i en la página actual
 
 function render() {
   const docs = activeDept ? pageDocs.filter(d => d.department_name === activeDept) : pageDocs;
@@ -487,6 +503,7 @@ function render() {
   document.getElementById('range').textContent = total ? (start + '–' + end) : 'vacío';
   document.getElementById('vig').textContent = docs.filter(d => d.is_active !== false).length;
   _expandedIdx = null;
+  _files = docs.map(d => d.file_name || '');
 
   if (!docs.length) {
     const q = qIn.value.trim();
@@ -502,20 +519,24 @@ function render() {
     const active = d.is_active !== false;
     const file   = d.file_name || '';
     const isSim  = d.is_simulated;
+
     let idxFlag;
-    if (isSim)              idxFlag = '<span class="idx-flag sim" title="documento simulado (seed)">◆ simulado</span>';
-    else if (d.content_extracted) idxFlag = '<span class="idx-flag on" title="contenido full-text indexado">◆ texto</span>';
-    else                    idxFlag = '<span class="idx-flag" title="sólo metadatos">◇ meta</span>';
+    if (isSim)                   idxFlag = '<span class="idx-flag sim" title="documento simulado">◆ sim</span>';
+    else if (d.content_extracted) idxFlag = '<span class="idx-flag on"  title="texto indexado">◆ txt</span>';
+    else                          idxFlag = '<span class="idx-flag"      title="solo metadatos">◇ meta</span>';
 
-    const actBtns = file
-      ? '<button class="btn-p" onclick="event.stopPropagation();openFile(\\''+esc(file)+'\\')" title="Ver documento">👁 Ver</button>'
-      + '<button onclick="event.stopPropagation();dlFile(\\''+esc(file)+'\\')" title="Descargar">⬇</button>'
+    // Botones de fila — usan índice numérico, sin strings embebidos
+    const btnVer = file
+      ? '<button class="ab ab-view" onclick="event.stopPropagation();openFile('+i+')" title="Abrir visor">👁 Ver</button>'
       : '';
-
-    const meta = buildMetaPanel(d, i, file, isSim);
+    const btnDl = (file && !isSim)
+      ? '<button class="ab ab-dl"   onclick="event.stopPropagation();dlFile('+i+')"   title="Descargar">↓ DL</button>'
+      : '';
+    const btnMeta =
+      '<button class="ab ab-meta" id="mb-'+i+'" onclick="event.stopPropagation();toggleMeta('+i+')" title="Metadatos JSON">{ }</button>';
 
     return ''
-      + '<div class="reg-row" onclick="toggleMeta('+i+')">'
+      + '<div class="reg-row">'
       +   '<div class="c-code">' + esc(d.code || '—') + '</div>'
       +   '<div class="c-title"><div class="t">' + esc(d.title || 'Sin título') + '</div>'
       +     '<div class="sub">' + idxFlag + (file ? ' · ' + esc(file) : '') + '</div></div>'
@@ -524,47 +545,77 @@ function render() {
       +   '<div class="c-ver">' + esc(d.version || '1.0') + '</div>'
       +   '<div class="c-status ' + (active ? 's-on' : 's-off') + '"><span class="led"></span>'
       +     (active ? 'vigente' : 'inactivo') + '</div>'
-      +   '<div class="c-actions">' + actBtns + '<button title="Metadatos">{ }</button></div>'
+      +   '<div class="c-actions">' + btnVer + btnDl + btnMeta + '</div>'
       + '</div>'
-      + meta;
+      + buildMetaPanel(d, i, file, isSim);
   }).join('');
 
   renderPager();
 }
 
 function buildMetaPanel(d, i, file, isSim) {
+  // Botones dentro del panel (también por índice)
+  const btnView = file
+    ? '<button class="mp-btn-view" onclick="openFile('+i+')">👁 Abrir visor</button>'
+    : '';
+  const btnDl = (file && !isSim)
+    ? '<button class="mp-btn-dl"   onclick="dlFile('+i+')">↓ Descargar</button>'
+    : '';
+  const simBadge = isSim ? '<span class="sim-badge">◆ Documento simulado (seed)</span>' : '';
+  const noFile   = !file ? '<span style="font-family:var(--mono);font-size:11px;color:var(--tx-4)">Sin archivo físico</span>' : '';
+
+  // Summary de campos clave
+  const fmtSize = d.size
+    ? (d.size > 1048576 ? (d.size/1048576).toFixed(1)+' MB' : Math.round(d.size/1024)+' KB')
+    : '—';
+  const fmtSync = (d.sync_date||'').replace('T',' ').substring(0,16) || '—';
+  const summary = ''
+    + kv('empresa',    d.company_name  || '—')
+    + kv('categoría',  d.category_name || '—')
+    + kv('depto.',     d.department_name || '—')
+    + kv('versión',    d.version       || '—')
+    + kv('extensión',  d.extension     || '—')
+    + kv('tamaño',     fmtSize)
+    + kv('sync',       fmtSync)
+    + kv('id postgres',String(d.postgres_id || '—'));
+
+  // JSON sin el campo content (puede ser enorme)
   const clone = Object.assign({}, d);
   delete clone.content;
-  const json  = JSON.stringify(clone, null, 2);
-  const viewBtn = file
-    ? '<button class="btn-view" onclick="openFile(\\''+esc(file)+'\\')" title="Ver en nueva pestaña">👁 Ver documento</button>'
-    + '<button class="btn-dl"   onclick="dlFile(\\''+esc(file)+'\\')" title="Descargar archivo">⬇ Descargar</button>'
-    : '<span style="font-family:var(--mono);font-size:11px;color:var(--tx-4)">Sin archivo físico</span>';
-  const simBadge = isSim ? '<span class="sim-badge">📋 Documento simulado</span>' : '';
+  const json = esc(JSON.stringify(clone, null, 2));
+
   return '<div class="meta-panel" id="mp-'+i+'">'
-    + '<div class="meta-actions">' + viewBtn + simBadge + '</div>'
-    + '<pre class="meta-json">' + esc(json) + '</pre>'
+    + '<div class="mp-actions">' + btnView + btnDl + simBadge + noFile + '</div>'
+    + '<div class="mp-summary">' + summary + '</div>'
+    + '<pre class="meta-json">' + json + '</pre>'
     + '</div>';
 }
 
+function kv(k, v) {
+  return '<div class="kv"><span class="k">'+k+'</span><span class="v">'+esc(String(v))+'</span></div>';
+}
+
 function toggleMeta(i) {
+  // Cerrar el panel anterior
   if (_expandedIdx !== null && _expandedIdx !== i) {
-    const prev = document.getElementById('mp-' + _expandedIdx);
-    if (prev) prev.classList.remove('open');
+    document.getElementById('mp-' + _expandedIdx)?.classList.remove('open');
+    document.getElementById('mb-' + _expandedIdx)?.classList.remove('open');
   }
-  const panel = document.getElementById('mp-' + i);
+  const panel  = document.getElementById('mp-' + i);
+  const metaBtn= document.getElementById('mb-' + i);
   if (!panel) return;
   const opening = !panel.classList.contains('open');
-  panel.classList.toggle('open');
+  panel.classList.toggle('open', opening);
+  metaBtn?.classList.toggle('open', opening);
   _expandedIdx = opening ? i : null;
 }
 
-function openFile(name) {
-  window.open('/indexer/viewer/' + encodeURIComponent(name), '_blank');
+function openFile(i) {
+  window.open('/indexer/viewer/' + encodeURIComponent(_files[i]), '_blank');
 }
 
-function dlFile(name) {
-  window.location.href = '/indexer/download/' + encodeURIComponent(name);
+function dlFile(i) {
+  window.location.href = '/indexer/download/' + encodeURIComponent(_files[i]);
 }
 
 function esc(s) {
