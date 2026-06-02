@@ -43,7 +43,8 @@ def get_file_info(file_url: str) -> dict:
         return {}
     full_path = resolve_path(file_url)
     p = Path(full_path)
-    ext = p.suffix.lower()
+    ext_with_dot = p.suffix.lower()          # ".docx"
+    ext = ext_with_dot.lstrip(".")           # "docx"
     size = 0
     try:
         size = p.stat().st_size
@@ -52,7 +53,7 @@ def get_file_info(file_url: str) -> dict:
     return {
         "file_name": p.name,
         "extension": ext,
-        "mime_type": _MIME_MAP.get(ext) or mimetypes.guess_type(str(p))[0] or "application/octet-stream",
+        "mime_type": _MIME_MAP.get(ext_with_dot) or mimetypes.guess_type(str(p))[0] or "application/octet-stream",
         "size":      size,
         "path":      file_url,
     }
