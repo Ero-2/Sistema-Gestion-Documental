@@ -37,6 +37,7 @@ _PROJECTION = {
     "content_extracted": 1,
     "is_simulated": 1,
     "sync_date": 1,
+    "file_meta": 1,
 }
 
 
@@ -287,6 +288,12 @@ body {
 .mp-summary .kv { display: flex; flex-direction: column; gap: 2px; }
 .mp-summary .k { font-size: 10px; text-transform: uppercase; letter-spacing: .04em; color: var(--tx-4); }
 .mp-summary .v { color: var(--tx-2); }
+/* bloque metadatos internos del archivo */
+.mp-filemeta { margin-top: 4px; }
+.mp-filemeta-title {
+  font-family: var(--mono); font-size: 10px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--tx-4); margin-bottom: 8px;
+}
 /* JSON pre */
 .meta-json {
   font-family: var(--mono); font-size: 11px; color: var(--tx-2);
@@ -579,6 +586,34 @@ function buildMetaPanel(d, i, file, isSim) {
     + kv('sync',       fmtSync)
     + kv('id postgres',String(d.postgres_id || '—'));
 
+  // Metadatos internos del archivo (autor, fechas, páginas, etc.)
+  let fileMeta = '';
+  if (d.file_meta && typeof d.file_meta === 'object' && Object.keys(d.file_meta).length) {
+    const labels = {
+      author: 'autor', title: 'título (archivo)', subject: 'asunto',
+      keywords: 'palabras clave', description: 'descripción',
+      last_modified_by: 'últ. modificado por', creator: 'creador',
+      producer: 'productor', created: 'creado', modified: 'modificado',
+      revision: 'revisión', language: 'idioma', category: 'categoría (archivo)',
+      pages: 'páginas', slides: 'diapositivas', sheets: 'hojas',
+      sheet_names: 'nombres de hoja', paragraphs: 'párrafos', words: 'palabras',
+      chars: 'caracteres', lines: 'líneas', encoding: 'codificación',
+      rows: 'filas', columns: 'columnas', headers: 'encabezados',
+      dimensions: 'dimensiones', color_mode: 'modo color', format: 'formato img',
+      dpi: 'DPI', make: 'cámara marca', model: 'cámara modelo',
+      software: 'software', datetime: 'fecha foto', datetimeoriginal: 'fecha original',
+      artist: 'artista', copyright: 'copyright', imagedescription: 'descripción img',
+      from: 'de', to: 'para', subject_mail: 'asunto', date: 'fecha envío',
+      cc: 'CC', attachments: 'adjuntos', encrypted: 'cifrado',
+    };
+    const fmRows = Object.entries(d.file_meta).map(([k, v]) => {
+      const label = labels[k] || k.replace(/_/g, ' ');
+      return kv(label, String(v));
+    }).join('');
+    fileMeta = '<div class="mp-filemeta"><div class="mp-filemeta-title">📎 metadatos del archivo</div>'
+      + '<div class="mp-summary">' + fmRows + '</div></div>';
+  }
+
   // JSON sin el campo content (puede ser enorme)
   const clone = Object.assign({}, d);
   delete clone.content;
@@ -587,6 +622,7 @@ function buildMetaPanel(d, i, file, isSim) {
   return '<div class="meta-panel" id="mp-'+i+'">'
     + '<div class="mp-actions">' + btnView + btnDl + simBadge + noFile + '</div>'
     + '<div class="mp-summary">' + summary + '</div>'
+    + fileMeta
     + '<pre class="meta-json">' + json + '</pre>'
     + '</div>';
 }

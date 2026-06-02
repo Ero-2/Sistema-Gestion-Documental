@@ -218,6 +218,265 @@ def _msg(path: str) -> str:
     return "\n".join(p for p in parts if p)
 
 
+# ── Metadata extraction ───────────────────────────────────────
+
+def _clean(d: dict) -> dict:
+    """Elimina None, strings vacíos y 0 del dict de metadatos."""
+    return {k: v for k, v in d.items() if v not in (None, "", 0, "0")}
+
+
+def _meta_pdf(path: str) -> dict:
+    import fitz
+    with fitz.open(path) as doc:
+        m = doc.metadata or {}
+        return _clean({
+            "author":    m.get("author"),
+            "title":     m.get("title"),
+            "subject":   m.get("subject"),
+            "keywords":  m.get("keywords"),
+            "creator":   m.get("creator"),
+            "producer":  m.get("producer"),
+            "created":   m.get("creationDate"),
+            "modified":  m.get("modDate"),
+            "pages":     doc.page_count,
+            "encrypted": doc.is_encrypted or None,
+        })
+
+
+def _cp_str(cp, attr: str):
+    v = getattr(cp, attr, None)
+    return str(v).strip() if v else None
+
+def _cp_dt(cp, attr: str):
+    v = getattr(cp, attr, None)
+    return v.isoformat() if v else None
+
+def _meta_docx(path: str) -> dict:
+    from docx import Document
+    doc = Document(path)
+    cp = doc.core_properties
+    text = " ".join(p.text for p in doc.paragraphs if p.text.strip())
+    words = len(text.split()) if text else None
+    return _clean({
+        "author":           _cp_str(cp, "author"),
+        "title":            _cp_str(cp, "title"),
+        "subject":          _cp_str(cp, "subject"),
+        "keywords":         _cp_str(cp, "keywords"),
+        "description":      _cp_str(cp, "description"),
+        "last_modified_by": _cp_str(cp, "last_modified_by"),
+        "created":          _cp_dt(cp,  "created"),
+        "modified":         _cp_dt(cp,  "modified"),
+        "revision":         getattr(cp, "revision", None),
+        "language":         _cp_str(cp, "language"),
+        "category":         _cp_str(cp, "category"),
+        "paragraphs":       len(doc.paragraphs) if doc.paragraphs else None,
+        "words":            words,
+    })
+
+
+def _meta_xlsx_xlsm(path: str) -> dict:
+    from openpyxl import load_workbook
+    wb = load_workbook(path, read_only=True, data_only=True)
+    cp = wb.properties
+    names = wb.sheetnames
+    return _clean({
+        "creator":          _cp_str(cp, "creator"),
+        "title":            _cp_str(cp, "title"),
+        "subject":          _cp_str(cp, "subject"),
+        "keywords":         _cp_str(cp, "keywords"),
+        "description":      _cp_str(cp, "description"),
+        "last_modified_by": _cp_str(cp, "lastModifiedBy"),
+        "created":          _cp_dt(cp,  "created"),
+        "modified":         _cp_dt(cp,  "modified"),
+        "category":         _cp_str(cp, "category"),
+        "sheets":           len(names),
+        "sheet_names":      ", ".join(names) if names else None,
+    })
+
+
+def _meta_xls(path: str) -> dict:
+    import xlrd
+    wb = xlrd.open_workbook(path)
+    return _clean({
+        "sheets":      wb.nsheets,
+        "sheet_names": ", ".join(wb.sheet_names()),
+    })
+
+
+def _meta_pptx(path: str) -> dict:
+    from pptx import Presentation
+    prs = Presentation(path)
+    cp = prs.core_properties
+    return _clean({
+        "author":           _cp_str(cp, "author"),
+        "title":            _cp_str(cp, "title"),
+        "subject":          _cp_str(cp, "subject"),
+        "keywords":         _cp_str(cp, "keywords"),
+        "description":      _cp_str(cp, "description"),
+        "last_modified_by": _cp_str(cp, "last_modified_by"),
+        "created":          _cp_dt(cp,  "created"),
+        "modified":         _cp_dt(cp,  "modified"),
+        "language":         _cp_str(cp, "language"),
+        "slides":           len(prs.slides),
+    })
+
+
+def _meta_image(path: str) -> dict:
+    from PIL import Image
+    from PIL.ExifTags import TAGS
+    _WANT = {"DateTime", "DateTimeOriginal", "DateTimeDigitized",
+             "Make", "Model", "Software", "Artist", "Copyright",
+             "ImageDescription", "XResolution", "YResolution"}
+    with Image.open(path) as img:
+        result: dict = {
+            "dimensions": f"{img.width}x{img.height}",
+            "color_mode": img.mode,
+            "format":     img.format,
+        }
+        try:
+            dpi = img.info.get("dpi")
+            if dpi:
+                result["dpi"] = f"{round(dpi[0])}x{round(dpi[1])}"
+        except Exception:
+            pass
+        try:
+            exif_raw = img._getexif()
+            if exif_raw:
+                for tag_id, value in exif_raw.items():
+                    tag = TAGS.get(tag_id, "")
+                    if tag in _WANT and isinstance(value, (str, int, float)):
+                        result[tag.lower()] = str(value).strip()
+        except Exception:
+            pass
+    return _clean(result)
+
+
+def _meta_txt(path: str) -> dict:
+    with open(path, "rb") as f:
+        raw = f.read(65536)  # muestra para detección
+    import chardet
+    enc = chardet.detect(raw).get("encoding") or "utf-8"
+    full = raw.decode(enc, errors="ignore")
+    return _clean({
+        "encoding": enc,
+        "lines":    full.count("\n") + 1,
+        "words":    len(full.split()),
+        "chars":    len(full),
+    })
+
+
+def _meta_csv(path: str) -> dict:
+    import csv as _csv_mod
+    with open(path, "r", encoding="utf-8", errors="ignore", newline="") as f:
+        rows = list(_csv_mod.reader(f))
+    cols = max((len(r) for r in rows), default=0)
+    return _clean({
+        "rows":    len(rows),
+        "columns": cols,
+        "headers": ", ".join(rows[0]) if rows else None,
+    })
+
+
+def _meta_odf(path: str) -> dict:
+    from odf.opendocument import load
+    from odf.namespaces import METANS
+    doc = load(path)
+    result: dict = {}
+    try:
+        meta_el = doc.meta
+        for child in meta_el.childNodes:
+            tag = getattr(child, "qname", (None, ""))[1]
+            text = getattr(child, "firstChild", None)
+            if tag and text:
+                val = str(text).strip()
+                if val:
+                    result[tag.replace("-", "_")] = val
+    except Exception:
+        pass
+    return _clean(result)
+
+
+def _meta_eml(path: str) -> dict:
+    import email as _email_mod
+    with open(path, "rb") as f:
+        msg = _email_mod.message_from_binary_file(f, policy=_email_mod.policy.default)
+    attachments = sum(
+        1 for part in msg.walk()
+        if part.get_content_disposition() == "attachment"
+    )
+    return _clean({
+        "from":        str(msg.get("from",    "") or ""),
+        "to":          str(msg.get("to",      "") or ""),
+        "subject":     str(msg.get("subject", "") or ""),
+        "date":        str(msg.get("date",    "") or ""),
+        "cc":          str(msg.get("cc",      "") or ""),
+        "attachments": attachments or None,
+    })
+
+
+def _meta_msg(path: str) -> dict:
+    import extract_msg
+    with extract_msg.Message(path) as msg:
+        return _clean({
+            "from":    str(msg.sender  or ""),
+            "to":      str(msg.to      or ""),
+            "subject": str(msg.subject or ""),
+            "date":    str(msg.date    or ""),
+        })
+
+
+_META_EXTRACTORS: dict = {
+    ".pdf":  _meta_pdf,
+    ".docx": _meta_docx,
+    ".doc":  _meta_docx,   # python-docx también lee .doc moderno
+    ".xlsx": _meta_xlsx_xlsm,
+    ".xlsm": _meta_xlsx_xlsm,
+    ".xls":  _meta_xls,
+    ".pptx": _meta_pptx,
+    ".ppt":  _meta_pptx,   # python-pptx puede leer algunos .ppt
+    ".odt":  _meta_odf,
+    ".ods":  _meta_odf,
+    ".odp":  _meta_odf,
+    ".png":  _meta_image,
+    ".jpg":  _meta_image,
+    ".jpeg": _meta_image,
+    ".gif":  _meta_image,
+    ".webp": _meta_image,
+    ".bmp":  _meta_image,
+    ".tiff": _meta_image,
+    ".tif":  _meta_image,
+    ".txt":  _meta_txt,
+    ".md":   _meta_txt,
+    ".csv":  _meta_csv,
+    ".log":  _meta_txt,
+    ".xml":  _meta_txt,
+    ".json": _meta_txt,
+    ".eml":  _meta_eml,
+    ".msg":  _meta_msg,
+}
+
+
+def extract_file_metadata(file_url: str) -> dict:
+    """
+    Extrae metadatos internos del archivo (autor, fechas, páginas, etc.).
+    Retorna dict vacío si el formato no es soportado o hay error. Nunca lanza.
+    """
+    if not file_url:
+        return {}
+    full_path = resolve_path(file_url)
+    if not os.path.isfile(full_path):
+        return {}
+    ext = Path(full_path).suffix.lower()
+    try:
+        fn = _META_EXTRACTORS.get(ext)
+        if fn is None:
+            return {}
+        return fn(full_path) or {}
+    except Exception as exc:
+        logger.warning("File metadata extraction failed [%s]: %s", file_url, exc)
+        return {}
+
+
 # ── Dispatch table ────────────────────────────────────────────
 _EXTRACTORS = {
     ".pdf":  _pdf,

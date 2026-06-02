@@ -6,7 +6,7 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 
 from database import collection
-from extractor import MAX_CONTENT_CHARS, STORAGE_ROOT, extract_text, get_file_info, resolve_path
+from extractor import MAX_CONTENT_CHARS, STORAGE_ROOT, extract_text, extract_file_metadata, get_file_info, resolve_path
 from models import PublicDMSMetadata
 
 router = APIRouter(prefix="/indexer", tags=["Indexer"])
@@ -137,9 +137,11 @@ async def upsert_document(metadata: PublicDMSMetadata):
             else:
                 file_info = get_file_info(metadata.file_url)
                 content, extraction_error = await asyncio.to_thread(extract_text, metadata.file_url)
+                file_meta = await asyncio.to_thread(extract_file_metadata, metadata.file_url)
                 doc_data.update(file_info)
                 doc_data["document_id"]              = metadata.postgres_id
                 doc_data["is_simulated"]             = False
+                doc_data["file_meta"]                = file_meta
                 doc_data["metadata"] = {
                     "department":   metadata.department_name,
                     "company_id":   metadata.company_id,
