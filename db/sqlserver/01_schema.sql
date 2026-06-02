@@ -37,10 +37,25 @@ CREATE TABLE [AspNetRoles] (
 );
 GO
 
+CREATE TABLE [Companies] (
+    [CompanyId] int NOT NULL IDENTITY,
+    [Code] nvarchar(20) NOT NULL,
+    [Name] nvarchar(200) NOT NULL,
+    [TaxId] nvarchar(max) NULL,
+    [IsActive] bit NOT NULL,
+    [CreatedAt] datetime2 NOT NULL,
+    [CreatedBy] nvarchar(450) NOT NULL,
+    [UpdatedAt] datetime2 NULL,
+    [UpdatedBy] nvarchar(max) NULL,
+    CONSTRAINT [PK_Companies] PRIMARY KEY ([CompanyId])
+);
+GO
+
 CREATE TABLE [AspNetUsers] (
     [Id] nvarchar(450) NOT NULL,
     [FirstName] nvarchar(max) NOT NULL,
     [LastName] nvarchar(max) NOT NULL,
+    [CompanyId] int NULL,
     [DepartmentId] int NULL,
     [IsActive] bit NOT NULL,
     [CreatedAt] datetime2 NOT NULL,
@@ -58,7 +73,8 @@ CREATE TABLE [AspNetUsers] (
     [LockoutEnd] datetimeoffset NULL,
     [LockoutEnabled] bit NOT NULL,
     [AccessFailedCount] int NOT NULL,
-    CONSTRAINT [PK_AspNetUsers] PRIMARY KEY ([Id])
+    CONSTRAINT [PK_AspNetUsers] PRIMARY KEY ([Id]),
+    CONSTRAINT [FK_AspNetUsers_Companies_CompanyId] FOREIGN KEY ([CompanyId]) REFERENCES [Companies] ([CompanyId]) ON DELETE NO ACTION
 );
 GO
 
@@ -78,6 +94,7 @@ GO
 
 CREATE TABLE [Departments] (
     [DepartmentId] int NOT NULL IDENTITY,
+    [CompanyId] int NOT NULL,
     [Code] nvarchar(20) NOT NULL,
     [Name] nvarchar(150) NOT NULL,
     [Description] nvarchar(500) NULL,
@@ -87,12 +104,14 @@ CREATE TABLE [Departments] (
     [CreatedBy] nvarchar(450) NOT NULL,
     [UpdatedAt] datetime2 NULL,
     [UpdatedBy] nvarchar(max) NULL,
-    CONSTRAINT [PK_Departments] PRIMARY KEY ([DepartmentId])
+    CONSTRAINT [PK_Departments] PRIMARY KEY ([DepartmentId]),
+    CONSTRAINT [FK_Departments_Companies_CompanyId] FOREIGN KEY ([CompanyId]) REFERENCES [Companies] ([CompanyId]) ON DELETE NO ACTION
 );
 GO
 
 CREATE TABLE [DocumentCategories] (
     [CategoryId] int NOT NULL IDENTITY,
+    [CompanyId] int NOT NULL,
     [Code] nvarchar(20) NOT NULL,
     [Name] nvarchar(150) NOT NULL,
     [Description] nvarchar(500) NULL,
@@ -103,6 +122,7 @@ CREATE TABLE [DocumentCategories] (
     [UpdatedAt] datetime2 NULL,
     [UpdatedBy] nvarchar(max) NULL,
     CONSTRAINT [PK_DocumentCategories] PRIMARY KEY ([CategoryId]),
+    CONSTRAINT [FK_DocumentCategories_Companies_CompanyId] FOREIGN KEY ([CompanyId]) REFERENCES [Companies] ([CompanyId]) ON DELETE NO ACTION,
     CONSTRAINT [FK_DocumentCategories_DocumentCategories_ParentCategoryId] FOREIGN KEY ([ParentCategoryId]) REFERENCES [DocumentCategories] ([CategoryId]) ON DELETE NO ACTION
 );
 GO
@@ -126,6 +146,7 @@ GO
 
 CREATE TABLE [WorkflowTemplates] (
     [WorkflowTemplateId] int NOT NULL IDENTITY,
+    [CompanyId] int NOT NULL,
     [Name] nvarchar(200) NOT NULL,
     [Description] nvarchar(500) NULL,
     [IsActive] bit NOT NULL,
@@ -133,7 +154,8 @@ CREATE TABLE [WorkflowTemplates] (
     [CreatedBy] nvarchar(450) NOT NULL,
     [UpdatedAt] datetime2 NULL,
     [UpdatedBy] nvarchar(max) NULL,
-    CONSTRAINT [PK_WorkflowTemplates] PRIMARY KEY ([WorkflowTemplateId])
+    CONSTRAINT [PK_WorkflowTemplates] PRIMARY KEY ([WorkflowTemplateId]),
+    CONSTRAINT [FK_WorkflowTemplates_Companies_CompanyId] FOREIGN KEY ([CompanyId]) REFERENCES [Companies] ([CompanyId]) ON DELETE NO ACTION
 );
 GO
 
@@ -209,6 +231,7 @@ GO
 
 CREATE TABLE [Documents] (
     [DocumentId] int NOT NULL IDENTITY,
+    [CompanyId] int NOT NULL,
     [Code] nvarchar(50) NOT NULL,
     [Title] nvarchar(500) NOT NULL,
     [Description] nvarchar(2000) NULL,
@@ -225,6 +248,7 @@ CREATE TABLE [Documents] (
     [UpdatedAt] datetime2 NULL,
     [UpdatedBy] nvarchar(450) NULL,
     CONSTRAINT [PK_Documents] PRIMARY KEY ([DocumentId]),
+    CONSTRAINT [FK_Documents_Companies_CompanyId] FOREIGN KEY ([CompanyId]) REFERENCES [Companies] ([CompanyId]) ON DELETE NO ACTION,
     CONSTRAINT [FK_Documents_Departments_DepartmentId] FOREIGN KEY ([DepartmentId]) REFERENCES [Departments] ([DepartmentId]) ON DELETE NO ACTION,
     CONSTRAINT [FK_Documents_DocumentCategories_CategoryId] FOREIGN KEY ([CategoryId]) REFERENCES [DocumentCategories] ([CategoryId]) ON DELETE NO ACTION,
     CONSTRAINT [FK_Documents_WorkflowTemplates_WorkflowTemplateId] FOREIGN KEY ([WorkflowTemplateId]) REFERENCES [WorkflowTemplates] ([WorkflowTemplateId])
@@ -383,10 +407,19 @@ GO
 CREATE INDEX [IX_ControlledDistributions_RecipientUserId] ON [ControlledDistributions] ([RecipientUserId]);
 GO
 
-CREATE UNIQUE INDEX [IX_Departments_Code] ON [Departments] ([Code]);
+CREATE UNIQUE INDEX [IX_Companies_Code] ON [Companies] ([Code]);
 GO
 
-CREATE UNIQUE INDEX [IX_DocumentCategories_Code] ON [DocumentCategories] ([Code]);
+CREATE INDEX [IX_AspNetUsers_CompanyId] ON [AspNetUsers] ([CompanyId]);
+GO
+
+CREATE UNIQUE INDEX [IX_Departments_CompanyId_Code] ON [Departments] ([CompanyId], [Code]);
+GO
+
+CREATE INDEX [IX_Departments_CompanyId] ON [Departments] ([CompanyId]);
+GO
+
+CREATE UNIQUE INDEX [IX_DocumentCategories_CompanyId_Code] ON [DocumentCategories] ([CompanyId], [Code]);
 GO
 
 CREATE INDEX [IX_DocumentCategories_ParentCategoryId] ON [DocumentCategories] ([ParentCategoryId]);
@@ -395,7 +428,16 @@ GO
 CREATE INDEX [IX_Documents_CategoryId] ON [Documents] ([CategoryId]);
 GO
 
-CREATE UNIQUE INDEX [IX_Documents_Code] ON [Documents] ([Code]);
+CREATE INDEX [IX_DocumentCategories_CompanyId] ON [DocumentCategories] ([CompanyId]);
+GO
+
+CREATE INDEX [IX_WorkflowTemplates_CompanyId] ON [WorkflowTemplates] ([CompanyId]);
+GO
+
+CREATE UNIQUE INDEX [IX_Documents_CompanyId_Code] ON [Documents] ([CompanyId], [Code]);
+GO
+
+CREATE INDEX [IX_Documents_CompanyId] ON [Documents] ([CompanyId]);
 GO
 
 CREATE INDEX [IX_Documents_DepartmentId] ON [Documents] ([DepartmentId]);

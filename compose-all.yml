@@ -44,7 +44,7 @@ services:
       ACCEPT_EULA:  "Y"
       MSSQL_PID:    Developer
     ports:
-      - "127.0.0.1:1434:1433"   # 1433 ocupado localmente → expuesto en 1434
+      - "127.0.0.1:1435:1433"   # 1433 ocupado localmente → expuesto en 1435
     volumes:
       - sqlserver_data:/var/opt/mssql
     healthcheck:

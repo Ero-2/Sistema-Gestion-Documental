@@ -18,7 +18,8 @@ public class PhpSyncService(
     public async Task ApproveDocumentAsync(int documentId, string code, string title,
         int categoryId, string categoryName, int departmentId, string departmentName,
         string version, string fileUrl, DateTime? effectiveDate, DateTime? expirationDate,
-        DateTime? approvedAt = null, int companyId = 0, string companyName = "")
+        DateTime? approvedAt = null, int companyId = 0, string companyName = "",
+        DateTime? nextReviewDate = null)
     {
         var payload = new
         {
@@ -35,7 +36,8 @@ public class PhpSyncService(
             expiration_date = expirationDate,
             approved_at = approvedAt,
             company_id = companyId,
-            company_name = companyName
+            company_name = companyName,
+            next_review_date = nextReviewDate
         };
 
         await SendWithRetryAsync("/api/events.php?action=approve", payload,
@@ -43,7 +45,8 @@ public class PhpSyncService(
     }
 
     public async Task UpdateDocumentAsync(int documentId, bool isActive,
-        DateTime? effectiveDate, DateTime? expirationDate, string reason = null)
+        DateTime? effectiveDate, DateTime? expirationDate, string reason = null,
+        DateTime? nextReviewDate = null)
     {
         var payload = new
         {
@@ -51,7 +54,8 @@ public class PhpSyncService(
             is_active = isActive,
             effective_date = effectiveDate,
             expiration_date = expirationDate,
-            reason = reason
+            reason = reason,
+            next_review_date = nextReviewDate
         };
 
         await SendWithRetryAsync("/api/events.php?action=update", payload,

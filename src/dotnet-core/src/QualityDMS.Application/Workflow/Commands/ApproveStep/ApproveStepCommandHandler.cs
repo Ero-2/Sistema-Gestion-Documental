@@ -107,7 +107,8 @@ public class ApproveStepCommandHandler(
                     document.ExpirationDate,
                     approvedVersion?.ApprovedAt,
                     document.CompanyId,
-                    companyName);
+                    companyName,
+                    document.NextReviewDate);
 
                 // API 2: Indexar metadatos + contenido (full-text) en MongoDB.
                 // Push completo: FastAPI no consulta SQL, lee el archivo del volumen compartido.

@@ -6,10 +6,12 @@ public interface IPhpSyncService
     Task ApproveDocumentAsync(int documentId, string code, string title,
         int categoryId, string categoryName, int departmentId, string departmentName,
         string version, string fileUrl, DateTime? effectiveDate, DateTime? expirationDate,
-        DateTime? approvedAt = null, int companyId = 0, string companyName = "");
+        DateTime? approvedAt = null, int companyId = 0, string companyName = "",
+        DateTime? nextReviewDate = null);
 
     Task UpdateDocumentAsync(int documentId, bool isActive,
-        DateTime? effectiveDate, DateTime? expirationDate, string reason = null);
+        DateTime? effectiveDate, DateTime? expirationDate, string reason = null,
+        DateTime? nextReviewDate = null);
 
     Task VersionDocumentAsync(int documentId, string version, string fileUrl);
 

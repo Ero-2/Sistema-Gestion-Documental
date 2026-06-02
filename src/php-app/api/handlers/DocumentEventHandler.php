@@ -47,11 +47,11 @@ class DocumentEventHandler
                 INSERT INTO publicdms.documents (
                     id, company_id, company_name, code, title, category_id, category_name,
                     department_id, department_name, version,
-                    file_url, is_active, effective_date, expiration_date, last_sync
+                    file_url, is_active, effective_date, expiration_date, next_review_date, last_sync
                 ) VALUES (
                     :id, :company_id, :company_name, :code, :title, :cat_id, :cat_name,
                     :dep_id, :dep_name, :version,
-                    :url, :is_active, :eff_date, :exp_date, NOW()
+                    :url, :is_active, :eff_date, :exp_date, :next_review_date, NOW()
                 )
                 ON CONFLICT (id) DO UPDATE SET
                     company_id = EXCLUDED.company_id,
@@ -65,25 +65,27 @@ class DocumentEventHandler
                     is_active = TRUE,
                     effective_date = EXCLUDED.effective_date,
                     expiration_date = EXCLUDED.expiration_date,
+                    next_review_date = EXCLUDED.next_review_date,
                     last_sync = NOW();
             SQL;
 
             $stmt = $this->pdo->prepare($query);
             $stmt->execute([
-                ':id'          => $data['document_id'],
-                ':company_id'  => $data['company_id'] ?? null,
-                ':company_name'=> $data['company_name'] ?? null,
-                ':code'        => $data['code'],
-                ':title'       => $data['title'],
-                ':cat_id'      => $data['category_id'],
-                ':cat_name'    => $data['category_name'],
-                ':dep_id'      => $data['department_id'],
-                ':dep_name'    => $data['department_name'],
-                ':version'     => $data['version'],
-                ':url'         => $data['file_url'] ?? null,
-                ':is_active'   => true,
-                ':eff_date'    => $data['effective_date'] ?? null,
-                ':exp_date'    => $data['expiration_date'] ?? null,
+                ':id'              => $data['document_id'],
+                ':company_id'      => $data['company_id'] ?? null,
+                ':company_name'    => $data['company_name'] ?? null,
+                ':code'            => $data['code'],
+                ':title'           => $data['title'],
+                ':cat_id'          => $data['category_id'],
+                ':cat_name'        => $data['category_name'],
+                ':dep_id'          => $data['department_id'],
+                ':dep_name'        => $data['department_name'],
+                ':version'         => $data['version'],
+                ':url'             => $data['file_url'] ?? null,
+                ':is_active'       => true,
+                ':eff_date'        => $data['effective_date'] ?? null,
+                ':exp_date'        => $data['expiration_date'] ?? null,
+                ':next_review_date'=> $data['next_review_date'] ?? null,
             ]);
 
             // 2) Obsoletar la vigente anterior (toda versión distinta a la entrante).
@@ -160,6 +162,11 @@ class DocumentEventHandler
         if (isset($data['expiration_date']) && $data['expiration_date']) {
             $updates[] = 'expiration_date = :exp_date';
             $params[':exp_date'] = $data['expiration_date'];
+        }
+
+        if (array_key_exists('next_review_date', $data)) {
+            $updates[] = 'next_review_date = :next_review_date';
+            $params[':next_review_date'] = $data['next_review_date'];
         }
 
         $updates[] = 'last_sync = NOW()';

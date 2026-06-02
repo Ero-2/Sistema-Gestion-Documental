@@ -62,7 +62,7 @@ public static class DbSeeder
 
         const int Total       = 10_000;
         const int BatchSize   = 500;
-        const int Concurrency = 50;
+        const int Concurrency = 10;
 
         logger.LogInformation("DbSeeder sandbox: generando {Total} documentos...", Total);
         var sw = Stopwatch.StartNew();
@@ -164,19 +164,11 @@ public static class DbSeeder
         var phpSync = services.GetRequiredService<IPhpSyncService>();
         var webhook = services.GetRequiredService<IPublicDmsWebhookService>();
 
-        // Re-query para obtener DocumentId (asignado por SQL Server al guardar)
-        var approvedIds = approvedSnapshot.Select(a => a.Doc.DocumentId).ToHashSet();
-        var dbDocs = await db.Documents
-            .Where(d => approvedIds.Contains(d.DocumentId))
-            .ToListAsync();
-
         int apiSuccess = 0, apiFail = 0;
-        var sem = new SemaphoreSlim(Concurrency);
 
         await Parallel.ForEachAsync(approvedSnapshot, new ParallelOptions { MaxDegreeOfParallelism = Concurrency },
             async (info, ct) =>
             {
-                await sem.WaitAsync(ct);
                 try
                 {
                     var fileUrl = $"seed/{info.Doc.Code}-v1.pdf";
@@ -199,10 +191,6 @@ public static class DbSeeder
                 catch
                 {
                     Interlocked.Increment(ref apiFail);
-                }
-                finally
-                {
-                    sem.Release();
                 }
             });
 

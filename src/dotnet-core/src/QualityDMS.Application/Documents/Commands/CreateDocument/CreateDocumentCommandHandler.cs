@@ -20,8 +20,10 @@ public class CreateDocumentCommandHandler(
             cmd.FileStream, cmd.FileName, cmd.ContentType, ct);
 
         // El documento hereda la empresa del autor (aislamiento multiempresa).
-        var companyId = currentUser.CompanyId ?? 0;
-        var document = Document.Create(cmd.Code, cmd.Title, cmd.CategoryId, cmd.DepartmentId, currentUser.UserId, companyId);
+        if (currentUser.CompanyId is null)
+            return Result.Failure<int>("El usuario no tiene empresa asignada. El SuperAdmin no puede crear documentos directamente.");
+
+        var document = Document.Create(cmd.Code, cmd.Title, cmd.CategoryId, cmd.DepartmentId, currentUser.UserId, currentUser.CompanyId.Value);
         document.Description = cmd.Description;
         document.WorkflowTemplateId = cmd.WorkflowTemplateId;
         document.NextReviewDate = cmd.NextReviewDate;

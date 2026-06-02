@@ -140,7 +140,7 @@
                                         <span class="badge @GetStatusBadgeClass(item.Action)">@item.Action</span>
                                     </td>
                                     <td class="small text-muted">@item.Date.ToString("dd/MM/yyyy")</td>
-                                    <td class="small text-muted">@item.User</td>
+                                    <td class="small text-muted">@(ViewBag.UserNames != null && ViewBag.UserNames.ContainsKey(item.User ?? "") ? ViewBag.UserNames[item.User] : (item.User == "seed" ? "Sistema" : (item.User ?? "—")))</td>
                                 </tr>
                             }
                             @if (!Model.RecentActivity.Any())

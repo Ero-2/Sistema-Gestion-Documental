@@ -323,23 +323,49 @@ DMS_SEED_MODE=$seedMode
 # -- Levantar contenedores ------------------------------------
 Write-Step "Building and starting containers..."
 Write-Host ""
-Write-Info "First run may take 5-15 minutes."
+Write-Info "First run may take 5-15 minutes (pulling DB images + health checks)."
+Write-Host ""
+Write-Info "Running: $composeCmd --env-file $envFile -f $composeFile up -d --build"
 Write-Host ""
 
-$upCmd = "$composeCmd --env-file $envFile -f $composeFile up -d --build"
-Write-Info "Running: $upCmd"
+$workDir = (Get-Location).Path
+$job = Start-Job -ScriptBlock {
+    param($cc, $ef, $cf, $wd)
+    Set-Location $wd
+    Invoke-Expression "$cc --env-file `"$ef`" -f `"$cf`" up -d --build" | Out-String
+    $LASTEXITCODE
+} -ArgumentList $composeCmd, $envFile, $composeFile, $workDir
+
+$elapsed = 0
+$si      = 0
+$sp      = @('|','/','-','\')
+Write-Host "  [~] Levantando contenedores... (0s)  " -NoNewline -ForegroundColor Yellow
+
+while ($job.State -eq 'Running') {
+    Start-Sleep -Seconds 1
+    $elapsed++
+    Write-Host ("`r  $($sp[$si % 4])  Levantando contenedores... ($elapsed`s)  ") -NoNewline -ForegroundColor Yellow
+    $si++
+}
+
+$res = Receive-Job $job -Wait -AutoRemoveJob
 Write-Host ""
 
-Invoke-Expression $upCmd
+$arr      = @($res)
+$exitCode = if ($arr.Count -gt 0 -and $arr[-1] -is [int]) { [int]$arr[-1] } else { 0 }
+$dockerOut = if ($arr.Count -gt 1) { $arr[0].ToString().Trim() } else { "" }
 
-if ($LASTEXITCODE -ne 0) {
+if ($dockerOut) {
+    $dockerOut -split "`n" | Where-Object { $_.Trim() } | ForEach-Object { Write-Host "  $_" }
     Write-Host ""
+}
+
+if ($exitCode -ne 0) {
     Write-Err "Failed to start containers."
     Write-Info "Check logs: $composeCmd -f $composeFile logs"
     exit 1
 }
 
-Write-Host ""
 Write-Ok "All containers started"
 
 # -- Healthchecks ---------------------------------------------
@@ -351,7 +377,7 @@ function Wait-Container {
         [bool]$NeedsHealth = $true
     )
 
-    Write-Host ("  [~] Waiting for " + $DisplayName + "...") -NoNewline -ForegroundColor Yellow
+    Write-Host ("  [~] Waiting for " + $DisplayName + "... (0s)") -NoNewline -ForegroundColor Yellow
 
     $elapsed  = 0
     $interval = 5
@@ -359,6 +385,8 @@ function Wait-Container {
     while ($elapsed -lt $TimeoutSecs) {
         Start-Sleep -Seconds $interval
         $elapsed += $interval
+
+        Write-Host ("`r  [~] Waiting for " + $DisplayName + "... (" + $elapsed + "s)   ") -NoNewline -ForegroundColor Yellow
 
         if ($NeedsHealth) {
             $status = docker inspect --format="{{.State.Health.Status}}" $Container 2>$null
