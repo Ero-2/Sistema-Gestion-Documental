@@ -208,6 +208,19 @@ public class DocumentsController(IMediator mediator, QualityDMSDbContext db, IFi
         return File(stream, contentType, fileName);
     }
 
+    /// <summary>Sirve el archivo para visualización inline (sin Content-Disposition: attachment).</summary>
+    public async Task<IActionResult> Preview(int versionId, CancellationToken ct)
+    {
+        var version = await db.DocumentVersions
+            .FirstOrDefaultAsync(v => v.VersionId == versionId, ct);
+
+        if (version is null) return NotFound();
+
+        var stream = await fileStorage.DownloadAsync(version.FilePath, ct);
+        var contentType = version.ContentType ?? "application/octet-stream";
+        return new FileStreamResult(stream, contentType);
+    }
+
     private async Task<IEnumerable<SelectListItem>> GetCategoriesSelectList() =>
         (await db.DocumentCategories.Where(c => c.IsActive).OrderBy(c => c.Name).ToListAsync())
         .Select(c => new SelectListItem(c.Name, c.CategoryId.ToString()));

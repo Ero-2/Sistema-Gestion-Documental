@@ -296,21 +296,25 @@ function renderTable(data) {
     return;
   }
   tbody.innerHTML = data.map(doc => {
-    const hasFile = doc.file_url && doc.file_url !== '';
-    const viewUrl = hasFile ? 'viewer.php?file='   + encodeURIComponent(doc.file_url) : '#';
-    const dlUrl   = hasFile ? 'view_pdf.php?file=' + encodeURIComponent(doc.file_url) + '&download=1' : '#';
-    const off     = hasFile ? '' : 'off';
+    const hasFile  = doc.file_url && doc.file_url !== '';
+    const isSeed   = hasFile && doc.file_url.startsWith('seed/');
+    const viewUrl  = hasFile ? 'viewer.php?file=' + encodeURIComponent(doc.file_url) : '#';
+    const dlUrl    = hasFile && !isSeed ? 'view_pdf.php?file=' + encodeURIComponent(doc.file_url) + '&download=1' : '#';
+    const viewOff  = hasFile ? '' : 'off';
+    const dlOff    = (hasFile && !isSeed) ? '' : 'off';
+    const dlTitle  = isSeed ? 'Documento simulado — sin archivo físico' : 'descargar';
+    const simBadge = isSeed ? '<span style="font-size:10px;color:var(--ink-4);font-family:var(--mono);margin-left:6px">[sim]</span>' : '';
     return ''
       + '<div class="l-row">'
       +   '<div class="d-code">' + esc(doc.code) + '</div>'
-      +   '<div class="d-doc"><div class="t">' + esc(doc.title) + '</div>'
+      +   '<div class="d-doc"><div class="t">' + esc(doc.title) + simBadge + '</div>'
       +     '<div class="sub">sync ' + esc(doc.last_sync || 'n/a') + '</div></div>'
       +   '<div class="d-taxo">' + esc(doc.category_name) + '<span class="slash">/</span>' + esc(doc.department_name) + '</div>'
       +   '<div class="seal-chip"><span class="led"></span>vigente</div>'
       +   '<div class="d-ver">' + esc(doc.version) + '</div>'
       +   '<div class="d-act">'
-      +     '<a href="' + viewUrl + '" target="_blank" class="act view ' + off + '">ver</a>'
-      +     '<a href="' + dlUrl + '" class="act dl ' + off + '" title="descargar">&darr;</a>'
+      +     '<a href="' + viewUrl + '" target="_blank" class="act view ' + viewOff + '" title="ver documento">ver</a>'
+      +     '<a href="' + dlUrl + '" class="act dl ' + dlOff + '" title="' + dlTitle + '">&darr;</a>'
       +   '</div>'
       + '</div>';
   }).join('');

@@ -12,6 +12,52 @@ if (strpos($relativePath, '..') !== false) {
     exit('Ruta no permitida.');
 }
 
+// Documentos simulados (seed/Faker) — sin archivo físico
+if (str_starts_with($relativePath, 'seed/')) {
+    $simCode  = htmlspecialchars(basename($relativePath, '.pdf'));
+    $simTitle = htmlspecialchars($_GET['title'] ?? 'Documento simulado');
+    http_response_code(200);
+    echo <<<HTML
+    <!DOCTYPE html>
+    <html lang="es">
+    <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Documento simulado</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+      body { background:#1a1a2e; color:#e0e0e0; font-family:'Segoe UI',sans-serif;
+             display:flex; align-items:center; justify-content:center; min-height:100vh; }
+      .card { background:#1e293b; border:1px solid #334155; border-radius:12px;
+              padding:40px 48px; max-width:480px; text-align:center; }
+      .icon { font-size:3rem; color:#7dd3fc; margin-bottom:1rem; }
+      h2 { font-size:1.05rem; color:#f8fafc; }
+      p  { color:#94a3b8; font-size:.875rem; line-height:1.6; }
+      .badge-sim { background:#1c3045; color:#7dd3fc; border:1px solid #1e4060;
+                   border-radius:6px; padding:4px 12px; font-size:.75rem; font-family:monospace; }
+    </style>
+    </head>
+    <body>
+    <div class="card">
+      <div class="icon"><i class="bi bi-file-earmark-text"></i></div>
+      <h2>Documento en entorno de pruebas</h2>
+      <p>Este documento fue generado con datos simulados (Faker).<br>
+         No existe un archivo físico asociado.</p>
+      <p>El documento está indexado y participa en búsquedas full-text.</p>
+      <span class="badge-sim">Documento simulado · sin archivo real</span>
+      <div class="mt-4">
+        <button onclick="history.back()" class="btn btn-sm btn-outline-secondary">
+          <i class="bi bi-arrow-left me-1"></i> Volver
+        </button>
+      </div>
+    </div>
+    </body>
+    </html>
+    HTML;
+    exit;
+}
+
 $filename = basename($relativePath);
 $ext      = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
 $fileUrl  = 'view_pdf.php?file=' . urlencode($_GET['file']);

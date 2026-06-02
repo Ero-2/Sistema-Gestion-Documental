@@ -15,6 +15,29 @@ if (strpos($relativePath, '..') !== false) {
     exit('Ruta no permitida.');
 }
 
+// Documentos simulados (seed/Faker) — sin archivo físico
+if (str_starts_with($relativePath, 'seed/')) {
+    http_response_code(422);
+    header('Content-Type: text/html; charset=UTF-8');
+    $simName = htmlspecialchars(basename($relativePath));
+    echo <<<HTML
+    <!DOCTYPE html><html lang="es"><head><meta charset="UTF-8">
+    <title>Documento simulado</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css">
+    </head>
+    <body class="bg-dark text-light d-flex align-items-center justify-content-center" style="min-height:100vh">
+    <div class="text-center p-4">
+      <div style="font-size:3rem">📄</div>
+      <h5 class="mt-3">Documento simulado</h5>
+      <p class="text-muted small">No existe archivo físico asociado a <code>{$simName}</code>.<br>
+         Fue generado mediante datos de prueba (Faker).</p>
+      <button onclick="history.back()" class="btn btn-sm btn-outline-secondary mt-2">Volver</button>
+    </div>
+    </body></html>
+    HTML;
+    exit;
+}
+
 $fullPath = DMS_STORAGE_ROOT . DIRECTORY_SEPARATOR . str_replace('/', DIRECTORY_SEPARATOR, $relativePath);
 
 $realStorage = realpath(DMS_STORAGE_ROOT);
