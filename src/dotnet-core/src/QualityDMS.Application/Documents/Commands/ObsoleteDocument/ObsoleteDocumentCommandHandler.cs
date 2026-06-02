@@ -8,7 +8,9 @@ namespace QualityDMS.Application.Documents.Commands.ObsoleteDocument;
 
 public class ObsoleteDocumentCommandHandler(
     IDocumentRepository documentRepository,
-    IUnitOfWork uow) : IRequestHandler<ObsoleteDocumentCommand, Result>
+    IUnitOfWork uow,
+    IPhpSyncService phpSync,
+    IPublicDmsWebhookService webhook) : IRequestHandler<ObsoleteDocumentCommand, Result>
 {
     public async Task<Result> Handle(ObsoleteDocumentCommand cmd, CancellationToken ct)
     {
@@ -22,6 +24,18 @@ public class ObsoleteDocumentCommandHandler(
         document.Obsolete();
         documentRepository.Update(document);
         await uow.SaveChangesAsync(ct);
+
+        // Propagar obsolescencia a PostgreSQL y MongoDB
+        try
+        {
+            await phpSync.ObsoleteDocumentAsync(document.DocumentId, "Retirado manualmente");
+            await webhook.ObsoleteAsync(document.DocumentId);
+        }
+        catch
+        {
+            // APIs externas no críticas; el doc ya está obsoleto en SQL Server
+        }
+
         return Result.Success();
     }
 }

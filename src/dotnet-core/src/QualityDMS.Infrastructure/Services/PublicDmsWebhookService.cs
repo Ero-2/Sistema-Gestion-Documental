@@ -48,4 +48,24 @@ public class PublicDmsWebhookService(
             logger.LogWarning(ex, "Webhook upsert failed for document {Id}", documentId);
         }
     }
+
+    public async Task ObsoleteAsync(int documentId)
+    {
+        try
+        {
+            var response = await httpClient.PostAsJsonAsync(
+                "/indexer/obsolete",
+                new { postgres_id = documentId.ToString() });
+
+            if (!response.IsSuccessStatusCode)
+                logger.LogWarning("Webhook obsolete [{Status}] document {Id}",
+                    response.StatusCode, documentId);
+            else
+                logger.LogInformation("Webhook obsolete: document {Id} marked inactive in MongoDB", documentId);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Webhook obsolete failed for document {Id}", documentId);
+        }
+    }
 }

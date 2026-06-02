@@ -1,0 +1,117 @@
+SISTEMA DE GESTIÓN DOCUMENTAL — PENDIENTES
+==========================================
+Generado: 2026-06-02
+Rama: mAIN
+
+──────────────────────────────────────────
+BUGS / GAPS CONOCIDOS
+──────────────────────────────────────────
+
+1. ERRORES 404 AL ABRIR / DESCARGAR DOCUMENTOS
+   Situación: Un doc existe en .NET (SQL Server) y fue aprobado, pero:
+   - No está indexado en MongoDB (sync falló o nunca se envió el webhook), o
+   - El archivo físico no está en el volumen compartido Docker.
+   Impacto: PHP y FastAPI muestran el link pero el visor/descarga falla con 404.
+   Pendiente:
+   - Mostrar mensaje de error útil al usuario en lugar de 404 genérico.
+   - Endpoint de re-indexación manual en FastAPI (/indexer/reindex/{postgres_id}).
+   - Validación en PHP antes de mostrar botón "ver" (verificar que el doc está en Mongo).
+
+2. RejectStepCommandHandler SIN SYNC A PHP/MONGODB
+   Situación: Cuando un doc es rechazado en el flujo de aprobación, solo se guarda
+   en SQL Server. PHP y MongoDB no reciben notificación del rechazo.
+   Impacto: No es crítico (el doc rechazado queda en Draft, no se publica), pero
+   el historial de intentos fallidos no llega a los stacks públicos.
+   Pendiente: Decidir si se quiere registrar rechazos en el modelo de lectura.
+
+──────────────────────────────────────────
+FUNCIONALIDADES FALTANTES
+──────────────────────────────────────────
+
+3. PHP — PÁGINA DE DETALLE DE DOCUMENTO
+   Situación: index.php solo muestra la tabla con botón "ver" (abre visor) y "hist"
+   (despliega versiones). No hay página de detalle con toda la ficha del documento.
+   Pendiente: Crear documento.php con ficha completa:
+   - Datos: código, título, categoría, departamento, empresa, vigencia, revisión.
+   - Historial de versiones con botones de descarga por versión.
+   - Distribución controlada (si aplica).
+
+4. DISTRIBUCIÓN CONTROLADA
+   Situación: ControlledDistributionConfiguration.cs existe en el dominio .NET
+   pero no hay comandos, vistas ni sincronización implementada.
+   Pendiente:
+   - Crear Command/Handler para registrar distribución.
+   - Vista en .NET para gestionar destinatarios por documento.
+   - Sync a PHP (eventos) y MongoDB (metadata).
+
+5. ALERTAS DE VENCIMIENTO
+   Situación: GetExpiringDocumentsQueryHandler.cs existe y hay una tarjeta
+   "por vencer · 30 días" en PHP. No hay sistema de notificaciones automáticas.
+   Pendiente:
+   - Job/cron en .NET que dispare notificaciones a usuarios responsables.
+   - Email o notificación interna cuando faltan N días para vencer.
+   - Configuración de umbral (30 días por defecto, configurable por empresa).
+
+6. BÚSQUEDA EN .NET (Views/Search/Index.cshtml)
+   Situación: Existe la vista pero no se verificó si está conectada a FastAPI
+   (MongoDB full-text) o si hace búsqueda directa en SQL Server.
+   Pendiente: Verificar y conectar al MongoDocumentSearchService si no lo está.
+
+7. RE-INDEXACIÓN MASIVA / SINCRONIZACIÓN FORZADA
+   Situación: Si el webhook falla durante aprobación, el doc queda en SQL Server
+   pero no llega a MongoDB ni a PostgreSQL. No hay mecanismo de recuperación.
+   Pendiente:
+   - Endpoint admin en FastAPI: POST /admin/reindex-all (recorre SQL Server via .NET).
+   - O tabla de reintentos (outbox pattern) en .NET para reenviar eventos fallidos.
+   - Panel en .NET que muestre qué docs están sincronizados vs. pendientes.
+
+──────────────────────────────────────────
+MEJORAS DE UX / UI
+──────────────────────────────────────────
+
+8. FASTAPI — VISOR DE VERSIONES ANTERIORES
+   Situación: El meta panel { } muestra version_history con links "ver".
+   Si el archivo de una versión anterior ya no está en el volumen, el link falla.
+   Pendiente: Verificar existencia del archivo antes de mostrar el link.
+
+9. PHP — FILTRO POR CATEGORÍA / DEPARTAMENTO
+   Situación: index.php no tiene filtros por categoría o departamento.
+   FastAPI sí tiene chips de departamento.
+   Pendiente: Agregar dropdowns o chips de filtro en PHP.
+
+10. PAGINACIÓN EN FASTAPI ADMIN (/admin/docs)
+    Situación: La vista admin carga todos los docs en una sola request.
+    Con muchos documentos puede volverse lenta.
+    Pendiente: Implementar paginación server-side igual que en /search.
+
+──────────────────────────────────────────
+INFRAESTRUCTURA / PRODUCCIÓN
+──────────────────────────────────────────
+
+11. OUTBOX PATTERN PARA EVENTOS
+    Situación: Si PHP o FastAPI están caídos cuando .NET aprueba un doc,
+    el evento se pierde. Solo hay 3 reintentos síncronos con delay lineal.
+    Pendiente: Guardar eventos fallidos en tabla SQL Server y reprocesarlos
+    con un job en background (Hangfire o similar).
+
+12. AUTENTICACIÓN PHP ↔ .NET
+    Situación: PHP delega auth al endpoint /api/v1/auth/validate de .NET.
+    No hay refresh token en PHP — la sesión expira según PHP session timeout.
+    Pendiente: Sincronizar expiración con el JWT de .NET o implementar refresh.
+
+13. MULTI-EMPRESA EN FASTAPI SEARCH
+    Situación: /search/documents acepta company_id como filtro opcional,
+    pero la UI de /search no lo expone. Un usuario ve todos los documentos
+    de todas las empresas si no se filtra.
+    Pendiente: Leer company_id del JWT en FastAPI y aplicarlo automáticamente.
+
+──────────────────────────────────────────
+NOTAS TÉCNICAS
+──────────────────────────────────────────
+
+- Stack .NET: ASP.NET Core 10, MediatR/CQRS, EF Core, SQL Server
+- Stack PHP: PHP-FPM + Nginx, PostgreSQL (modelo de lectura desacoplado)
+- Stack FastAPI: Python 3.12, MongoDB (full-text + metadatos de archivos)
+- Volumen compartido: /app/storage (archivos físicos accesibles por .NET y FastAPI)
+- Sincronización: push por eventos HTTP (no hay bus de mensajes)
+- Sin internet en Docker build: usar "docker cp + docker restart" para hotfix

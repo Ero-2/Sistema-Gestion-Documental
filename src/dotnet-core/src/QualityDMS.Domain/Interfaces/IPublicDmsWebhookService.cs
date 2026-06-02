@@ -18,4 +18,6 @@ public interface IPublicDmsWebhookService
         string fileUrl,
         int companyId = 0,
         string companyName = "");
+
+    Task ObsoleteAsync(int documentId);
 }

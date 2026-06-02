@@ -7,10 +7,11 @@ require_once __DIR__ . '/../../includes/MongoSearchClient.php';
 $page   = isset($_GET['page'])  && (int)$_GET['page']  > 0 ? (int)$_GET['page']  : 1;
 $limit  = isset($_GET['limit']) && (int)$_GET['limit'] > 0 ? (int)$_GET['limit'] : 10;
 $search = isset($_GET['search']) ? trim($_GET['search']) : '';
+$status = ($_GET['status'] ?? 'active') === 'obsolete' ? 'obsolete' : 'active';
 $offset = ($page - 1) * $limit;
 
 try {
-    $whereClause  = "WHERE is_active = TRUE";
+    $whereClause  = $status === 'obsolete' ? "WHERE is_active = FALSE" : "WHERE is_active = TRUE";
     $countParams  = [];
     $dataParams   = [];
     $mongoIds     = [];

@@ -8,6 +8,11 @@ from fastapi.responses import FileResponse, HTMLResponse
 from database import collection
 from extractor import MAX_CONTENT_CHARS, STORAGE_ROOT, extract_text, extract_file_metadata, get_file_info, resolve_path
 from models import PublicDMSMetadata
+from pydantic import BaseModel
+
+
+class ObsoleteRequest(BaseModel):
+    postgres_id: str
 
 router = APIRouter(prefix="/indexer", tags=["Indexer"])
 
@@ -153,9 +158,24 @@ async def upsert_document(metadata: PublicDMSMetadata):
                 doc_data["content_extracted"]        = extraction_error is None
                 doc_data["content_extraction_error"] = extraction_error
 
+        # Si ya existe el doc con versión distinta, guardar la versión anterior en el historial
+        update_op: dict = {"$set": doc_data}
+        existing = await collection.find_one(
+            {"postgres_id": metadata.postgres_id},
+            {"_id": 0, "version": 1, "file_url": 1, "file_name": 1, "sync_date": 1},
+        )
+        if existing and existing.get("version") and existing.get("version") != metadata.version:
+            old_entry = {
+                "version":      existing.get("version"),
+                "file_url":     existing.get("file_url", ""),
+                "file_name":    existing.get("file_name", ""),
+                "obsoleted_at": datetime.now(timezone.utc).isoformat(),
+            }
+            update_op["$push"] = {"version_history": {"$each": [old_entry], "$position": 0}}
+
         result = await collection.update_one(
             {"postgres_id": metadata.postgres_id},
-            {"$set": doc_data},
+            update_op,
             upsert=True,
         )
 
@@ -164,6 +184,22 @@ async def upsert_document(metadata: PublicDMSMetadata):
             "postgres_id": metadata.postgres_id,
             "action":      "updated" if result.matched_count else "indexed",
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/obsolete")
+async def obsolete_document(body: ObsoleteRequest):
+    """Marca documento como inactivo en MongoDB cuando es retirado en .NET."""
+    postgres_id = body.postgres_id
+    try:
+        result = await collection.update_one(
+            {"postgres_id": str(postgres_id)},
+            {"$set": {"is_active": False, "sync_date": datetime.now(timezone.utc).isoformat()}},
+        )
+        if result.matched_count == 0:
+            return {"status": "not_found", "postgres_id": postgres_id}
+        return {"status": "success", "postgres_id": postgres_id, "action": "obsoleted"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

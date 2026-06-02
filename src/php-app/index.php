@@ -50,6 +50,53 @@ body {
 ::selection { background: var(--seal-dim); }
 a { color: inherit; text-decoration: none; }
 
+/* ── Tabs vigentes / obsoletos ───────────────────────── */
+.tabs {
+  display: flex; gap: 6px; padding: 18px 28px 0;
+}
+.tab {
+  font-family: var(--mono); font-size: 12px; cursor: pointer;
+  padding: 6px 16px; border-radius: 4px; border: 1px solid var(--bd-2);
+  background: var(--card); color: var(--ink-3);
+  transition: all .12s ease;
+}
+.tab.on { background: var(--ink-1); color: var(--paper); border-color: var(--ink-1); }
+.tab.obsolete.on { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* ── Historial de versiones (panel inline) ───────────── */
+.l-hist {
+  border-top: 1px dashed var(--bd-2);
+  padding: 12px 16px;
+  background: var(--field);
+  display: none;
+}
+.l-hist.open { display: block; }
+.hist-title {
+  font-family: var(--mono); font-size: 11px; color: var(--ink-3);
+  text-transform: uppercase; letter-spacing: .08em; margin-bottom: 8px;
+}
+.hist-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 5px 0; border-bottom: 1px solid var(--bd-1); font-size: 13px;
+}
+.hist-row:last-child { border-bottom: none; }
+.hist-ver { font-family: var(--mono); font-weight: 600; min-width: 44px; }
+.hist-badge {
+  font-family: var(--mono); font-size: 10px; padding: 2px 8px;
+  border-radius: 3px; white-space: nowrap;
+}
+.hist-badge.vig { background: rgba(47,143,107,.12); color: var(--vigente); }
+.hist-badge.obs { background: rgba(176,71,63,.12); color: var(--danger); }
+.hist-dates { color: var(--ink-3); font-size: 12px; flex: 1; }
+.hist-act { margin-left: auto; }
+.hist-act a {
+  font-family: var(--mono); font-size: 11px; padding: 3px 10px;
+  border: 1px solid var(--bd-2); border-radius: 3px; color: var(--ink-2);
+  transition: all .1s;
+}
+.hist-act a:hover { border-color: var(--bd-3); color: var(--ink-1); }
+.hist-act a.off { opacity: .35; pointer-events: none; }
+
 /* ── Membrete superior ────────────────────────────────── */
 .topbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -220,6 +267,11 @@ a { color: inherit; text-decoration: none; }
   </div>
 </header>
 
+<div class="tabs">
+  <span class="tab on"      id="tab-active"   onclick="switchTab('active')">vigentes</span>
+  <span class="tab obsolete" id="tab-obsolete" onclick="switchTab('obsolete')">obsoletos</span>
+</div>
+
 <div class="canvas">
 
   <div class="summary">
@@ -265,10 +317,18 @@ a { color: inherit; text-decoration: none; }
 let currentPage = 1;
 const recordsPerPage = 10;
 let deptChart = null;
+let currentTab = 'active';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 document.addEventListener('DOMContentLoaded', () => { loadData(1); loadReports(); });
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('tab-active').classList.toggle('on', tab === 'active');
+  document.getElementById('tab-obsolete').classList.toggle('on', tab === 'obsolete');
+  loadData(1);
+}
 
 async function loadData(page = 1) {
   currentPage = page;
@@ -276,7 +336,8 @@ async function loadData(page = 1) {
   const tbody = document.getElementById('resultsTable');
   tbody.innerHTML = '<div class="l-state">consultando registro…</div>';
   try {
-    const res = await fetch(`api/documents/documents.php?page=${page}&limit=${recordsPerPage}&search=${encodeURIComponent(search)}`);
+    const url = `api/documents/documents.php?page=${page}&limit=${recordsPerPage}&search=${encodeURIComponent(search)}&status=${currentTab}`;
+    const res = await fetch(url);
     const result = await res.json();
     if (result.status === 'success') {
       renderTable(result.data);
@@ -295,7 +356,8 @@ function renderTable(data) {
     tbody.innerHTML = '<div class="l-state">no se encontraron documentos</div>';
     return;
   }
-  tbody.innerHTML = data.map(doc => {
+  const isObs = currentTab === 'obsolete';
+  tbody.innerHTML = data.map((doc, i) => {
     const hasFile  = doc.file_url && doc.file_url !== '';
     const isSeed   = hasFile && doc.file_url.startsWith('seed/');
     const viewUrl  = hasFile ? 'viewer.php?file=' + encodeURIComponent(doc.file_url) : '#';
@@ -304,20 +366,67 @@ function renderTable(data) {
     const dlOff    = (hasFile && !isSeed) ? '' : 'off';
     const dlTitle  = isSeed ? 'Documento simulado — sin archivo físico' : 'descargar';
     const simBadge = isSeed ? '<span style="font-size:10px;color:var(--ink-4);font-family:var(--mono);margin-left:6px">[sim]</span>' : '';
+    const chipCls  = isObs ? 'seal-chip' : 'seal-chip';
+    const chipStyle= isObs ? 'style="background:rgba(176,71,63,.10);color:var(--danger);border-color:rgba(176,71,63,.25)"' : '';
+    const chipLed  = isObs ? '<span class="led" style="background:var(--danger)"></span>obsoleto' : '<span class="led"></span>vigente';
+    const rowId    = 'hist-' + i;
     return ''
-      + '<div class="l-row">'
+      + '<div class="l-row" style="flex-wrap:wrap">'
       +   '<div class="d-code">' + esc(doc.code) + '</div>'
       +   '<div class="d-doc"><div class="t">' + esc(doc.title) + simBadge + '</div>'
       +     '<div class="sub">sync ' + esc(doc.last_sync || 'n/a') + '</div></div>'
       +   '<div class="d-taxo">' + esc(doc.category_name) + '<span class="slash">/</span>' + esc(doc.department_name) + '</div>'
-      +   '<div class="seal-chip"><span class="led"></span>vigente</div>'
+      +   '<div class="' + chipCls + '" ' + chipStyle + '>' + chipLed + '</div>'
       +   '<div class="d-ver">' + esc(doc.version) + '</div>'
       +   '<div class="d-act">'
       +     '<a href="' + viewUrl + '" target="_blank" class="act view ' + viewOff + '" title="ver documento">ver</a>'
       +     '<a href="' + dlUrl + '" class="act dl ' + dlOff + '" title="' + dlTitle + '">&darr;</a>'
+      +     '<a class="act" style="cursor:pointer" title="historial de versiones" onclick="toggleHist(event,' + doc.id + ',\'' + rowId + '\')">hist</a>'
       +   '</div>'
+      +   '<div class="l-hist" id="' + rowId + '"><div class="hist-title">cargando historial…</div></div>'
       + '</div>';
   }).join('');
+}
+
+async function toggleHist(e, docId, rowId) {
+  e.preventDefault();
+  const panel = document.getElementById(rowId);
+  if (panel.classList.contains('open')) {
+    panel.classList.remove('open');
+    return;
+  }
+  panel.classList.add('open');
+  if (panel.dataset.loaded) return;
+  try {
+    const res = await fetch('api/documents/versions.php?document_id=' + docId);
+    const result = await res.json();
+    if (result.status === 'success' && result.versions.length) {
+      panel.innerHTML = '<div class="hist-title">historial de versiones</div>'
+        + result.versions.map(v => {
+          const isVig = v.is_current == true || v.is_current === 't' || v.is_current === '1';
+          const badge = isVig ? '<span class="hist-badge vig">vigente</span>' : '<span class="hist-badge obs">obsoleta</span>';
+          const hasFile = v.file_url && v.file_url !== '';
+          const isSeed  = hasFile && v.file_url.startsWith('seed/');
+          const vUrl    = hasFile ? 'viewer.php?file=' + encodeURIComponent(v.file_url) : '#';
+          const vOff    = hasFile ? '' : 'off';
+          const dates   = [
+            v.approved_at  ? 'aprobada ' + esc(v.approved_at)   : '',
+            v.obsoleted_at ? '· obsoleta ' + esc(v.obsoleted_at) : '',
+          ].filter(Boolean).join(' ');
+          return '<div class="hist-row">'
+            + '<span class="hist-ver">v' + esc(v.version) + '</span>'
+            + badge
+            + '<span class="hist-dates">' + (dates || '—') + '</span>'
+            + '<span class="hist-act"><a href="' + vUrl + '" target="_blank" class="' + vOff + '">ver</a></span>'
+            + '</div>';
+        }).join('');
+    } else {
+      panel.innerHTML = '<div class="hist-title" style="color:var(--ink-4)">sin historial registrado</div>';
+    }
+    panel.dataset.loaded = '1';
+  } catch(e) {
+    panel.innerHTML = '<div class="hist-title" style="color:var(--danger)">error al cargar historial</div>';
+  }
 }
 
 function renderPagination(meta) {

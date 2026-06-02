@@ -129,7 +129,7 @@ async def on_startup():
         logger.error(f"Error configurando índices: {e}")
 
 
-@app.get("/", tags=["General"], response_class=None)
+@app.get("/", tags=["General"], include_in_schema=False)
 async def root():
     from fastapi.responses import RedirectResponse
     return RedirectResponse(url="/auth/login")

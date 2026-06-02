@@ -38,6 +38,7 @@ _PROJECTION = {
     "is_simulated": 1,
     "sync_date": 1,
     "file_meta": 1,
+    "version_history": 1,
 }
 
 
@@ -64,6 +65,7 @@ def _authorize(authorization: Optional[str], x_api_key: Optional[str]) -> dict:
 async def list_documents(
     q: Optional[str] = Query(default=None, description="Término de búsqueda (opcional)"),
     company_id: Optional[int] = Query(default=None, description="Filtrar por empresa (multiempresa)"),
+    status: Optional[str] = Query(default="active", description="'active' | 'obsolete' | 'all'"),
     limit: int = Query(default=100, ge=1, le=500, description="Documentos por página"),
     offset: int = Query(default=0, ge=0, description="Desplazamiento para paginación"),
     authorization: Optional[str] = Header(default=None),
@@ -74,15 +76,20 @@ async def list_documents(
     Sin `q`: devuelve todos los documentos (orden por sync_date desc).
     Con `q` (>=2): búsqueda full-text (título, código, categoría, depto y contenido).
     `company_id`: acota a una empresa (aislamiento multiempresa).
+    `status`: 'active' (default) solo vigentes, 'obsolete' solo retirados, 'all' sin filtro.
     Paginación: `limit` (tamaño de página) + `offset` (salto). `total` es el conteo
     completo del filtro (independiente de la página) para que el cliente pueda paginar.
     """
     _authorize(authorization, x_api_key)
 
-    # Filtro base de empresa (aplica con o sin término de búsqueda).
-    base = {}
+    # Filtro base: empresa + estado activo/obsoleto
+    base: dict = {}
     if company_id is not None:
         base["company_id"] = company_id
+    if status == "obsolete":
+        base["is_active"] = False
+    elif status != "all":
+        base["is_active"] = {"$ne": False}  # vigentes (True o sin campo)
 
     term = (q or "").strip()
     if term:
@@ -169,6 +176,21 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 ::selection { background: var(--accent-dim); }
+
+/* ── Status tabs ──────────────────────────────────────── */
+.status-tabs {
+  display: flex; gap: 6px; padding: 14px 24px 0;
+  border-bottom: 1px solid var(--bd-1);
+}
+.stab {
+  font-family: var(--mono); font-size: 12px; padding: 6px 16px;
+  border-radius: 4px 4px 0 0; border: 1px solid transparent;
+  background: transparent; color: var(--tx-3); cursor: pointer;
+  transition: all .12s ease; border-bottom: none;
+}
+.stab:hover { color: var(--tx-1); }
+.stab.on { background: var(--surface-1); border-color: var(--bd-2); color: var(--tx-1); }
+.stab.obs.on { color: var(--danger); border-color: rgba(224,114,122,0.35); }
 
 /* ── Header ───────────────────────────────────────────── */
 .topbar {
@@ -383,6 +405,11 @@ body {
   </div>
 </header>
 
+<div class="status-tabs">
+  <span class="stab on"      id="stab-active"   onclick="switchStatus('active')">vigentes</span>
+  <span class="stab obs"     id="stab-obsolete" onclick="switchStatus('obsolete')">obsoletos</span>
+</div>
+
 <div class="toolbar">
   <div class="prompt">
     <span class="caret">&gt;</span>
@@ -419,7 +446,15 @@ let pageDocs = [];         // página actual recibida del servidor
 let total = 0;             // total de documentos que matchean el filtro
 let offset = 0;            // desplazamiento de la página actual
 let activeDept = null;
+let currentStatus = 'active';
 let _t;
+
+function switchStatus(s) {
+  currentStatus = s;
+  document.getElementById('stab-active').classList.toggle('on', s === 'active');
+  document.getElementById('stab-obsolete').classList.toggle('on', s === 'obsolete');
+  fetchDocs(true);
+}
 
 const rows  = document.getElementById('rows');
 const qIn   = document.getElementById('q');
@@ -446,7 +481,7 @@ async function fetchDocs(resetPage) {
   showState('consultando índice <span class="cursor"></span>');
   document.getElementById('pager').innerHTML = '';
   try {
-    let url = '/search/documents?limit=' + PAGE + '&offset=' + offset;
+    let url = '/search/documents?limit=' + PAGE + '&offset=' + offset + '&status=' + currentStatus;
     if (q.length >= 2) url += '&q=' + encodeURIComponent(q);
     const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
     if (res.status === 401) { logout(); return; }
@@ -517,7 +552,7 @@ function render() {
     renderPager();
     showState(
       '<div class="big">sin registros</div><div class="hint">' +
-      (q ? 'ningún documento coincide con «' + esc(q) + '»' : 'no hay documentos indexados todavía') +
+      (q ? 'ningún documento coincide con «' + esc(q) + '»' : (currentStatus === 'obsolete' ? 'no hay documentos obsoletos' : 'no hay documentos indexados todavía')) +
       '</div>');
     return;
   }
@@ -614,6 +649,23 @@ function buildMetaPanel(d, i, file, isSim) {
       + '<div class="mp-summary">' + fmRows + '</div></div>';
   }
 
+  // Historial de versiones (version_history en MongoDB)
+  let verHist = '';
+  if (Array.isArray(d.version_history) && d.version_history.length) {
+    const rows = d.version_history.map(v => {
+      const dt = (v.obsoleted_at||'').replace('T',' ').substring(0,16) || '—';
+      const vFile = v.file_url || '';
+      const isSeedV = vFile.startsWith('seed/');
+      const vName = v.file_name || '';
+      const vLink = vFile && !isSeedV && vName
+        ? '<a href="/indexer/viewer/'+encodeURIComponent(vName)+'" target="_blank" style="font-size:11px;color:var(--accent);font-family:var(--mono)">ver</a>'
+        : '';
+      return kv('v' + (v.version||'?') + ' — obsoleta ' + dt, vLink || '(sin archivo)');
+    }).join('');
+    verHist = '<div class="mp-filemeta"><div class="mp-filemeta-title">📜 versiones anteriores</div>'
+      + '<div class="mp-summary">' + rows + '</div></div>';
+  }
+
   // JSON sin el campo content (puede ser enorme)
   const clone = Object.assign({}, d);
   delete clone.content;
@@ -623,6 +675,7 @@ function buildMetaPanel(d, i, file, isSim) {
     + '<div class="mp-actions">' + btnView + btnDl + simBadge + noFile + '</div>'
     + '<div class="mp-summary">' + summary + '</div>'
     + fileMeta
+    + verHist
     + '<pre class="meta-json">' + json + '</pre>'
     + '</div>';
 }
