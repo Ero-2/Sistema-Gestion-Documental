@@ -560,7 +560,7 @@ function toggleMeta(i) {
 }
 
 function openFile(name) {
-  window.open('/indexer/file/' + encodeURIComponent(name), '_blank');
+  window.open('/indexer/viewer/' + encodeURIComponent(name), '_blank');
 }
 
 function dlFile(name) {

@@ -252,6 +252,278 @@ async def download_file(name: str):
     )
 
 
+@router.get("/viewer/{name}", response_class=HTMLResponse, include_in_schema=False)
+async def viewer_page(name: str):
+    """
+    Visor de documentos en el navegador. Obtiene metadatos de MongoDB,
+    embebe el contenido extraído cuando aplica y devuelve HTML que renderiza
+    el archivo según su extensión.
+    """
+    doc = await collection.find_one(
+        {"file_name": name},
+        {"_id": 0, "title": 1, "code": 1, "extension": 1, "mime_type": 1,
+         "is_simulated": 1, "content": 1, "content_extracted": 1,
+         "content_extraction_error": 1, "category_name": 1, "department_name": 1,
+         "version": 1, "file_url": 1},
+    )
+
+    import json as _json
+
+    if not doc:
+        raise HTTPException(status_code=404, detail="Documento no encontrado")
+
+    title   = doc.get("title") or name
+    code    = doc.get("code") or ""
+    ext     = (doc.get("extension") or "").lower().lstrip(".")
+    isSim   = doc.get("is_simulated", False)
+    content = doc.get("content") or ""
+    fileUrl = f"/indexer/file/{name}"
+    dlUrl   = f"/indexer/download/{name}"
+
+    simInfo = ""
+    if isSim:
+        cat  = doc.get("category_name", "—")
+        dept = doc.get("department_name", "—")
+        ver  = doc.get("version", "1.0")
+        simInfo = f"""
+        <div class="sim-card">
+          <div class="sim-icon">📄</div>
+          <h2>Documento en entorno de pruebas</h2>
+          <p>Este documento fue generado con datos simulados (Faker).<br>
+             No existe un archivo físico asociado.</p>
+          <p>El documento está indexado y participa en búsquedas full-text.</p>
+          <span class="sim-badge">Documento simulado · sin archivo real</span>
+          <dl class="sim-meta">
+            <dt>Código</dt><dd>{code}</dd>
+            <dt>Título</dt><dd>{title}</dd>
+            <dt>Categoría</dt><dd>{cat}</dd>
+            <dt>Departamento</dt><dd>{dept}</dd>
+            <dt>Versión</dt><dd>{ver}</dd>
+          </dl>
+        </div>"""
+
+    html = f"""<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {{
+  --bg: #0e1217; --surface-1: #141a21; --surface-2: #19212a;
+  --tx-1: #d7dee5; --tx-2: #9aa7b2; --tx-3: #6b7682; --tx-4: #4a535c;
+  --accent: #4fd1c5; --danger: #e0727a;
+  --bd-1: rgba(200,215,225,0.08); --bd-2: rgba(200,215,225,0.14); --bd-3: rgba(200,215,225,0.22);
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+}}
+* {{ box-sizing: border-box; margin: 0; padding: 0; }}
+html, body {{ height: 100%; }}
+body {{ background: var(--bg); color: var(--tx-1); font-family: var(--sans); font-size: 14px; -webkit-font-smoothing: antialiased; }}
+/* ── Topbar ── */
+.topbar {{
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface-1); border-bottom: 1px solid var(--bd-2);
+  padding: 10px 20px; height: 52px; position: sticky; top: 0; z-index: 10;
+}}
+.btn-back {{
+  font-family: var(--mono); font-size: 12px; color: var(--tx-2);
+  background: transparent; border: 1px solid var(--bd-2);
+  border-radius: 4px; padding: 6px 12px; cursor: pointer;
+  transition: border-color .12s, color .12s; flex-shrink: 0;
+}}
+.btn-back:hover {{ border-color: var(--bd-3); color: var(--tx-1); }}
+.topbar-title {{ font-family: var(--mono); font-size: 13px; font-weight: 500; color: var(--tx-1); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0; }}
+.ext-badge {{
+  font-family: var(--mono); font-size: 11px; font-weight: 600;
+  background: #1e3a5f; color: #7dd3fc;
+  border-radius: 4px; padding: 3px 8px; flex-shrink: 0;
+}}
+.btn-dl {{
+  font-family: var(--mono); font-size: 12px; color: var(--tx-2);
+  background: transparent; border: 1px solid var(--bd-2);
+  border-radius: 4px; padding: 6px 14px; cursor: pointer;
+  transition: border-color .12s, color .12s; flex-shrink: 0; text-decoration: none;
+  display: inline-flex; align-items: center; gap: 6px;
+}}
+.btn-dl:hover {{ border-color: var(--accent); color: var(--accent); }}
+/* ── Viewer area ── */
+#viewer {{ height: calc(100vh - 52px); overflow: auto; }}
+iframe {{ width: 100%; height: 100%; border: none; }}
+#image-wrap {{ display: flex; justify-content: center; align-items: flex-start; padding: 32px; }}
+#image-wrap img {{ max-width: 100%; border-radius: 6px; box-shadow: 0 4px 24px rgba(0,0,0,.5); }}
+#docx-wrap {{ padding: 2rem; max-width: 860px; margin: 0 auto; background: #fff; color: #111; min-height: 100%; font-family: serif; }}
+#sheet-tabs {{ background: var(--surface-1); border-bottom: 1px solid var(--bd-2); padding: 6px 14px; display: flex; gap: 6px; flex-wrap: wrap; }}
+#sheet-tabs button {{ background: var(--surface-2); border: 1px solid var(--bd-2); color: var(--tx-2); padding: 4px 12px; border-radius: 4px; font-size: 12px; font-family: var(--mono); cursor: pointer; }}
+#sheet-tabs button.active {{ background: var(--accent); border-color: var(--accent); color: #0e1217; }}
+#sheet-wrap {{ padding: 1rem; overflow: auto; height: calc(100vh - 52px - 40px); }}
+#sheet-wrap table {{ border-collapse: collapse; font-size: .82rem; font-family: var(--mono); }}
+#sheet-wrap th {{ background: var(--surface-2); color: var(--tx-2); padding: 6px 10px; border: 1px solid var(--bd-2); white-space: nowrap; }}
+#sheet-wrap td {{ border: 1px solid var(--bd-1); padding: 5px 10px; color: var(--tx-1); }}
+#text-wrap {{ padding: 24px 28px; }}
+#text-wrap pre {{ background: var(--surface-1); border: 1px solid var(--bd-1); border-radius: 6px; padding: 16px; font-family: var(--mono); font-size: 13px; color: #a8e6cf; white-space: pre-wrap; word-break: break-word; line-height: 1.6; }}
+.preview-note {{
+  background: var(--surface-2); border: 1px solid var(--bd-2);
+  border-radius: 6px; padding: 10px 16px; margin-bottom: 16px;
+  font-family: var(--mono); font-size: 12px; color: var(--tx-3);
+  display: flex; align-items: center; gap: 10px;
+}}
+.preview-note a {{ color: var(--accent); text-decoration: none; margin-left: auto; }}
+.preview-note a:hover {{ text-decoration: underline; }}
+/* ── Unsupported / sim ── */
+.center-page {{ display: flex; align-items: center; justify-content: center; height: calc(100vh - 52px); }}
+.unsup-card {{
+  background: var(--surface-1); border: 1px solid var(--bd-2);
+  border-radius: 10px; padding: 36px 44px; max-width: 420px; text-align: center;
+}}
+.unsup-icon {{ font-size: 2.8rem; margin-bottom: 14px; }}
+.unsup-card h3 {{ color: var(--tx-1); font-size: 1rem; margin-bottom: 10px; }}
+.unsup-card p {{ color: var(--tx-3); font-size: 0.85rem; line-height: 1.6; margin-bottom: 16px; }}
+.unsup-card .dl-btn {{
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--mono); font-size: 13px; color: var(--tx-1);
+  background: var(--surface-2); border: 1px solid var(--bd-2);
+  border-radius: 6px; padding: 9px 20px; text-decoration: none;
+  transition: border-color .12s, color .12s;
+}}
+.unsup-card .dl-btn:hover {{ border-color: var(--accent); color: var(--accent); }}
+/* simulado */
+.sim-card {{
+  background: var(--surface-1); border: 1px solid var(--bd-2);
+  border-radius: 12px; padding: 40px 48px; max-width: 500px; text-align: center;
+}}
+.sim-icon {{ font-size: 3rem; margin-bottom: 14px; }}
+.sim-card h2 {{ font-size: 1.05rem; color: var(--tx-1); margin-bottom: 10px; }}
+.sim-card p {{ color: var(--tx-3); font-size: .875rem; line-height: 1.6; margin-bottom: 8px; }}
+.sim-badge {{
+  display: inline-block; font-family: var(--mono); font-size: 10px;
+  color: #7dd3fc; background: #1c3045; border: 1px solid #1e4060;
+  border-radius: 4px; padding: 4px 12px; margin: 12px 0;
+}}
+.sim-meta {{ margin-top: 20px; text-align: left; background: var(--bg); border-radius: 6px; padding: 14px 18px; font-size: .8rem; }}
+.sim-meta dt {{ color: var(--tx-4); text-transform: uppercase; font-size: .7rem; letter-spacing: .04em; }}
+.sim-meta dd {{ color: var(--tx-2); margin: 2px 0 10px; font-family: var(--mono); }}
+/* spinner */
+.spin-wrap {{ display: flex; justify-content: center; align-items: center; padding: 64px; }}
+.spinner {{ width: 28px; height: 28px; border: 3px solid var(--bd-2); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; }}
+@keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <button class="btn-back" onclick="history.length > 1 ? history.back() : (location.href = '/search')">&#8592; volver</button>
+  <span class="topbar-title">{title}</span>
+  {'<span class="ext-badge">' + ext.upper() + '</span>' if ext else ''}
+  {'<a href="' + dlUrl + '" class="btn-dl">&#8595; descargar</a>' if not isSim else ''}
+</div>
+
+<div id="viewer">
+"""
+
+    # ── Render según extensión ────────────────────────────────────────────────
+    IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp", "bmp", "svg", "avif", "ico"}
+    TEXT_EXTS  = {"txt", "csv", "log", "json", "xml", "yaml", "yml", "ini", "md", "tsv", "conf"}
+
+    if isSim:
+        html += f'<div class="center-page">{simInfo}</div>'
+
+    elif ext == "pdf":
+        html += f'<iframe src="{fileUrl}" title="{title}"></iframe>'
+
+    elif ext in IMAGE_EXTS:
+        html += f'<div id="image-wrap"><img src="{fileUrl}" alt="{title}"></div>'
+
+    elif ext in {"html", "htm"}:
+        html += f'<iframe src="{fileUrl}" sandbox="allow-same-origin" title="{title}"></iframe>'
+
+    elif ext == "docx":
+        html += f"""<div id="docx-wrap"><div class="spin-wrap"><div class="spinner"></div></div></div>
+<script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+<script>
+fetch({_json.dumps(fileUrl)})
+  .then(r => r.arrayBuffer())
+  .then(buf => mammoth.convertToHtml({{ arrayBuffer: buf }}))
+  .then(r => {{ document.getElementById('docx-wrap').innerHTML = r.value || '<p style="color:#888">Sin contenido visible.</p>'; }})
+  .catch(e => {{ document.getElementById('docx-wrap').innerHTML = '<p style="color:#e0727a">Error al procesar DOCX: ' + e.message + '</p>'; }});
+</script>"""
+
+    elif ext in {"xlsx", "xls"}:
+        html += f"""<div id="sheet-tabs"></div>
+<div id="sheet-wrap"><div class="spin-wrap"><div class="spinner"></div></div></div>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+let _wb;
+fetch({_json.dumps(fileUrl)})
+  .then(r => r.arrayBuffer())
+  .then(buf => {{
+    _wb = XLSX.read(buf, {{ type: 'array' }});
+    const tabs = document.getElementById('sheet-tabs');
+    _wb.SheetNames.forEach((n, i) => {{
+      const b = document.createElement('button');
+      b.textContent = n;
+      if (i === 0) b.classList.add('active');
+      b.onclick = () => {{
+        document.querySelectorAll('#sheet-tabs button').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        renderSheet(n);
+      }};
+      tabs.appendChild(b);
+    }});
+    renderSheet(_wb.SheetNames[0]);
+  }})
+  .catch(e => {{ document.getElementById('sheet-wrap').innerHTML = '<p style="color:#e0727a;padding:1rem">Error al procesar Excel: ' + e.message + '</p>'; }});
+function renderSheet(n) {{
+  document.getElementById('sheet-wrap').innerHTML = XLSX.utils.sheet_to_html(_wb.Sheets[n], {{ editable: false }});
+}}
+</script>"""
+
+    elif ext in TEXT_EXTS:
+        # Texto disponible directamente desde MongoDB si fue extraído
+        if content and doc.get("content_extracted"):
+            import html as _html_mod
+            safe = _html_mod.escape(content[:80000])
+            html += f'<div id="text-wrap"><pre>{safe}</pre></div>'
+        else:
+            html += f"""<div id="text-wrap">
+<div class="preview-note">Cargando texto… <a href="{dlUrl}">&#8595; Descargar original</a></div>
+<pre id="txt">…</pre>
+</div>
+<script>
+fetch({_json.dumps(fileUrl)})
+  .then(r => r.text())
+  .then(t => {{ document.getElementById('txt').textContent = t; document.querySelector('.preview-note').style.display='none'; }})
+  .catch(e => {{ document.getElementById('txt').textContent = 'Error: ' + e.message; }});
+</script>"""
+
+    else:
+        # Fallback: texto extraído por el indexador o prompt de descarga
+        if content and doc.get("content_extracted"):
+            import html as _html_mod
+            safe = _html_mod.escape(content[:80000])
+            html += f"""<div id="text-wrap">
+<div class="preview-note">Vista previa de texto (.{ext} no se renderiza en el navegador).
+  <a href="{dlUrl}">&#8595; Descargar original</a>
+</div>
+<pre>{safe}</pre>
+</div>"""
+        else:
+            html += f"""<div class="center-page">
+<div class="unsup-card">
+  <div class="unsup-icon">📎</div>
+  <h3>Vista previa no disponible</h3>
+  <p>El formato <strong>.{ext}</strong> no puede renderizarse en el navegador.<br>
+     Descarga el archivo para abrirlo con la aplicación correspondiente.</p>
+  <a href="{dlUrl}" class="dl-btn">&#8595; Descargar {name}</a>
+</div>
+</div>"""
+
+    html += "\n</div>\n</body>\n</html>"
+    return HTMLResponse(content=html)
+
+
 @router.get("/content/{name}")
 async def get_content(name: str):
     """

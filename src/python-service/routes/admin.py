@@ -204,7 +204,7 @@ function toggleDetail(i) {
 }
 
 function viewFile(name) {
-  window.open(`${BASE}/indexer/file/${encodeURIComponent(name)}`, '_blank');
+  window.open(`${BASE}/indexer/viewer/${encodeURIComponent(name)}`, '_blank');
 }
 
 function dlFile(name) {
