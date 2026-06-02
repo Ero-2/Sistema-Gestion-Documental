@@ -43,7 +43,8 @@ services:
           memory: 512M
 
   # ──────────────────────────────────────────────────────
-  # PHP 8.3 + Apache — Portal público de consulta documental
+  # PHP 8.3-FPM — Portal público de consulta documental
+  # FPM escucha en :9000 (FastCGI). Nginx hace proxy.
   # Consume eventos HTTP desde .NET (api/events.php).
   # No accede a SQL Server.
   # ──────────────────────────────────────────────────────
@@ -60,8 +61,8 @@ services:
       FASTAPI_URL:       ${FASTAPI_URL:-http://fastapi:8000}
       FASTAPI_API_KEY:   ${FASTAPI_API_KEY}
       DOTNET_API_URL:    ${DOTNET_API_URL:-http://dotnet:8080}
-    ports:
-      - "127.0.0.1:8082:80"
+    expose:
+      - "9000"   # FastCGI — solo accesible desde Nginx
     volumes:
       - ./data/uploads:/var/dms/uploads:ro
     depends_on:
@@ -83,9 +84,10 @@ services:
           memory: 256M
 
   # ──────────────────────────────────────────────────────
-  # Nginx — Reverse proxy público
-  # Puerto 80  → PHP
-  # Puerto 443 → FastAPI (vía dms_backbone)
+  # Nginx — Punto de entrada único
+  #   :80   → PHP-FPM  (portal público)
+  #   :443  → FastAPI  (motor búsqueda)  expuesto en 8443
+  #   :8084 → .NET     (gestión interna)
   # ──────────────────────────────────────────────────────
   nginx:
     build:
@@ -93,10 +95,15 @@ services:
     container_name: dms_nginx
     ports:
       - "80:80"
-      - "8443:443"
+      - "8443:443"   # 443 ocupado por XAMPP SSL
+      - "8084:8084"  # .NET — Sistema de Gestión
+    volumes:
+      - ./src/php-app:/var/www/html:ro   # PHP files para SCRIPT_FILENAME y estáticos
+      - ./data/uploads:/var/dms/uploads:ro
     depends_on:
       - php
     networks:
+      - php_internal
       - dms_backbone
     restart: unless-stopped
     logging:

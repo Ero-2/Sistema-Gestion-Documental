@@ -8,6 +8,9 @@ services:
 
   # ──────────────────────────────────────────────────────
   # Nginx — Reverse proxy + HTTPS (cert self-signed)
+  #   :80   → PHP-FPM  (portal público)
+  #   :443  → FastAPI  (motor búsqueda)  expuesto en 8443
+  #   :8084 → .NET     (gestión interna)
   # ──────────────────────────────────────────────────────
   nginx:
     build:
@@ -16,6 +19,10 @@ services:
     ports:
       - "80:80"
       - "8443:443"   # 443 ocupado por XAMPP SSL → expuesto en 8443
+      - "8084:8084"  # .NET — Sistema de Gestión
+    volumes:
+      - ./src/php-app:/var/www/html:ro   # PHP files para SCRIPT_FILENAME
+      - uploads_data:/var/dms/uploads:ro
     depends_on:
       - php
       - fastapi
@@ -211,7 +218,8 @@ services:
           memory: 256M
 
   # ──────────────────────────────────────────────────────
-  # PHP 8.3 + Apache — Módulo PublicDMS (Consulta Pública)
+  # PHP 8.3-FPM — Módulo PublicDMS (Consulta Pública)
+  # FPM escucha en :9000 (FastCGI). Nginx hace proxy.
   # Sync por eventos (.NET → PHP). Sin polling ni cron.
   # ──────────────────────────────────────────────────────
   php:
@@ -227,8 +235,8 @@ services:
       FASTAPI_URL:        http://fastapi:8000
       FASTAPI_API_KEY:    ${FASTAPI_API_KEY}
       DOTNET_API_URL:     http://dotnet:8080
-    ports:
-      - "127.0.0.1:8082:80"   # acceso directo sin Nginx
+    expose:
+      - "9000"   # FastCGI — solo accesible desde Nginx
     volumes:
       - uploads_data:/var/dms/uploads:ro
     depends_on:
