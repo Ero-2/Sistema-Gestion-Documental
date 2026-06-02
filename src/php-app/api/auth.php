@@ -7,6 +7,16 @@
 
 header('Content-Type: application/json; charset=utf-8');
 
+$action = $_GET['action'] ?? null;
+
+// Logout — GET es válido (enlace de navegación)
+if ($action === 'logout') {
+    session_start();
+    session_destroy();
+    header('Location: /login.php');
+    exit;
+}
+
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
     echo json_encode(['error' => 'Method not allowed']);
@@ -17,16 +27,6 @@ $input = json_decode(file_get_contents('php://input'), true);
 if (!is_array($input)) {
     http_response_code(400);
     echo json_encode(['error' => 'Invalid JSON']);
-    exit;
-}
-
-$action = $_GET['action'] ?? null;
-
-// Logout
-if ($action === 'logout') {
-    session_start();
-    session_destroy();
-    header('Location: /login.php');
     exit;
 }
 
