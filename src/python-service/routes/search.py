@@ -32,7 +32,10 @@ _PROJECTION = {
     "file_url": 1,
     "file_name": 1,
     "extension": 1,
+    "mime_type": 1,
+    "size": 1,
     "content_extracted": 1,
+    "is_simulated": 1,
     "sync_date": 1,
 }
 
@@ -234,7 +237,7 @@ body {
 .register { padding: 8px 24px 48px; }
 .reg-head, .reg-row {
   display: grid;
-  grid-template-columns: 110px 1fr 200px 70px 96px 40px;
+  grid-template-columns: 110px 1fr 200px 70px 96px 148px;
   align-items: center; gap: 16px;
 }
 .reg-head {
@@ -249,6 +252,37 @@ body {
   border-left: 2px solid transparent;
 }
 .reg-row:hover { background: var(--hover); border-left-color: var(--accent); }
+/* Metadata expand panel */
+.meta-panel {
+  display: none; background: var(--surface-2);
+  border-bottom: 1px solid var(--bd-2); border-left: 2px solid var(--accent);
+  padding: 14px 20px 16px; gap: 16px;
+}
+.meta-panel.open { display: flex; }
+.meta-actions { display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+.btn-view {
+  font-family: var(--mono); font-size: 12px; color: #fff;
+  background: #0284c7; border: none; border-radius: 4px;
+  padding: 7px 14px; cursor: pointer; white-space: nowrap;
+}
+.btn-view:hover { background: #0369a1; }
+.btn-dl {
+  font-family: var(--mono); font-size: 12px; color: var(--tx-1);
+  background: transparent; border: 1px solid var(--bd-2);
+  border-radius: 4px; padding: 7px 14px; cursor: pointer; white-space: nowrap;
+}
+.btn-dl:hover { border-color: var(--bd-3); }
+.sim-badge {
+  font-family: var(--mono); font-size: 10px; color: #7dd3fc;
+  background: #1c3045; border: 1px solid #1e4060;
+  border-radius: 4px; padding: 4px 10px; text-align: center;
+}
+.meta-json {
+  flex: 1; font-family: var(--mono); font-size: 11px; color: var(--tx-2);
+  background: var(--surface-1); border: 1px solid var(--bd-1);
+  border-radius: 4px; padding: 10px 14px;
+  max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
 
 .c-code { font-family: var(--mono); font-size: 13px; font-weight: 600; color: var(--accent); letter-spacing: -0.01em; }
 .c-title { min-width: 0; }
@@ -264,10 +298,14 @@ body {
 .s-on  { color: var(--vigente); }
 .s-off .led { background: var(--inactivo); }
 .s-off { color: var(--inactivo); }
-.c-open { font-family: var(--mono); color: var(--tx-4); text-align: right; transition: color .12s ease; }
-.reg-row:hover .c-open { color: var(--accent); }
+.c-actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.c-actions button { font-family: var(--mono); font-size: 11px; border-radius: 4px; padding: 5px 9px; cursor: pointer; border: 1px solid var(--bd-2); background: transparent; color: var(--tx-2); transition: all .1s; }
+.c-actions button:hover { border-color: var(--accent); color: var(--accent); }
+.c-actions .btn-p { background: #0284c7; border-color: #0284c7; color: #fff; }
+.c-actions .btn-p:hover { background: #0369a1; }
 .idx-flag { font-family: var(--mono); font-size: 10px; color: var(--tx-4); }
 .idx-flag.on { color: var(--accent); }
+.idx-flag.sim { color: #7dd3fc; }
 
 /* ── States ───────────────────────────────────────────── */
 .state { padding: 64px 24px; text-align: center; font-family: var(--mono); font-size: 13px; color: var(--tx-3); }
@@ -306,8 +344,10 @@ body {
   .c-title { grid-column: 1 / -1; }
   .c-taxo { grid-column: 1 / -1; }
   .c-ver { grid-column: 1; }
-  .c-open { display: none; }
+  .c-actions { grid-column: 2; }
   .chips { width: 100%; margin: 10px 0 0; }
+  .meta-panel { flex-direction: column; }
+  .meta-actions { flex-direction: row; flex-wrap: wrap; }
 }
 </style>
 </head>
@@ -340,7 +380,7 @@ body {
 <main class="register">
   <div class="reg-head">
     <div>código</div><div>documento</div><div>clasificación</div>
-    <div>ver.</div><div>estado</div><div></div>
+    <div>ver.</div><div>estado</div><div style="text-align:right">acciones</div>
   </div>
   <div id="rows"></div>
   <nav class="pager" id="pager"></nav>
@@ -437,6 +477,8 @@ function filterDept(el, dept) {
   render();
 }
 
+let _expandedIdx = null;
+
 function render() {
   const docs = activeDept ? pageDocs.filter(d => d.department_name === activeDept) : pageDocs;
   const start = total ? offset + 1 : 0;
@@ -444,6 +486,7 @@ function render() {
   document.getElementById('total').textContent = total.toLocaleString('es');
   document.getElementById('range').textContent = total ? (start + '–' + end) : 'vacío';
   document.getElementById('vig').textContent = docs.filter(d => d.is_active !== false).length;
+  _expandedIdx = null;
 
   if (!docs.length) {
     const q = qIn.value.trim();
@@ -455,30 +498,73 @@ function render() {
     return;
   }
 
-  rows.innerHTML = docs.map(d => {
+  rows.innerHTML = docs.map((d, i) => {
     const active = d.is_active !== false;
-    const file = d.file_name || d.file_url || '';
-    const idx  = d.content_extracted ? '<span class="idx-flag on" title="contenido full-text indexado">◆ texto</span>'
-                                     : '<span class="idx-flag" title="sólo metadatos">◇ meta</span>';
+    const file   = d.file_name || '';
+    const isSim  = d.is_simulated;
+    let idxFlag;
+    if (isSim)              idxFlag = '<span class="idx-flag sim" title="documento simulado (seed)">◆ simulado</span>';
+    else if (d.content_extracted) idxFlag = '<span class="idx-flag on" title="contenido full-text indexado">◆ texto</span>';
+    else                    idxFlag = '<span class="idx-flag" title="sólo metadatos">◇ meta</span>';
+
+    const actBtns = file
+      ? '<button class="btn-p" onclick="event.stopPropagation();openFile(\\''+esc(file)+'\\')" title="Ver documento">👁 Ver</button>'
+      + '<button onclick="event.stopPropagation();dlFile(\\''+esc(file)+'\\')" title="Descargar">⬇</button>'
+      : '';
+
+    const meta = buildMetaPanel(d, i, file, isSim);
+
     return ''
-      + '<div class="reg-row" ' + (file ? 'onclick="openFile(\\''+esc(file)+'\\')"' : '') + '>'
+      + '<div class="reg-row" onclick="toggleMeta('+i+')">'
       +   '<div class="c-code">' + esc(d.code || '—') + '</div>'
       +   '<div class="c-title"><div class="t">' + esc(d.title || 'Sin título') + '</div>'
-      +     '<div class="sub">' + idx + (file ? ' · ' + esc(file) : '') + '</div></div>'
+      +     '<div class="sub">' + idxFlag + (file ? ' · ' + esc(file) : '') + '</div></div>'
       +   '<div class="c-taxo">' + esc(d.category_name || '—')
       +     '<span class="dot">/</span>' + esc(d.department_name || '—') + '</div>'
       +   '<div class="c-ver">' + esc(d.version || '1.0') + '</div>'
       +   '<div class="c-status ' + (active ? 's-on' : 's-off') + '"><span class="led"></span>'
       +     (active ? 'vigente' : 'inactivo') + '</div>'
-      +   '<div class="c-open">' + (file ? '&rsaquo;' : '') + '</div>'
-      + '</div>';
+      +   '<div class="c-actions">' + actBtns + '<button title="Metadatos">{ }</button></div>'
+      + '</div>'
+      + meta;
   }).join('');
 
   renderPager();
 }
 
+function buildMetaPanel(d, i, file, isSim) {
+  const clone = Object.assign({}, d);
+  delete clone.content;
+  const json  = JSON.stringify(clone, null, 2);
+  const viewBtn = file
+    ? '<button class="btn-view" onclick="openFile(\\''+esc(file)+'\\')" title="Ver en nueva pestaña">👁 Ver documento</button>'
+    + '<button class="btn-dl"   onclick="dlFile(\\''+esc(file)+'\\')" title="Descargar archivo">⬇ Descargar</button>'
+    : '<span style="font-family:var(--mono);font-size:11px;color:var(--tx-4)">Sin archivo físico</span>';
+  const simBadge = isSim ? '<span class="sim-badge">📋 Documento simulado</span>' : '';
+  return '<div class="meta-panel" id="mp-'+i+'">'
+    + '<div class="meta-actions">' + viewBtn + simBadge + '</div>'
+    + '<pre class="meta-json">' + esc(json) + '</pre>'
+    + '</div>';
+}
+
+function toggleMeta(i) {
+  if (_expandedIdx !== null && _expandedIdx !== i) {
+    const prev = document.getElementById('mp-' + _expandedIdx);
+    if (prev) prev.classList.remove('open');
+  }
+  const panel = document.getElementById('mp-' + i);
+  if (!panel) return;
+  const opening = !panel.classList.contains('open');
+  panel.classList.toggle('open');
+  _expandedIdx = opening ? i : null;
+}
+
 function openFile(name) {
   window.open('/indexer/file/' + encodeURIComponent(name), '_blank');
+}
+
+function dlFile(name) {
+  window.location.href = '/indexer/download/' + encodeURIComponent(name);
 }
 
 function esc(s) {

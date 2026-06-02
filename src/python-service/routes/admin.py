@@ -36,11 +36,22 @@ _HTML = """<!DOCTYPE html>
   .ok   { background: #064e3b; color: #34d399; }
   .fail { background: #450a0a; color: #f87171; }
   .pend { background: #1c1917; color: #a8a29e; }
+  .sim  { background: #1c3045; color: #7dd3fc; }
   #pagination { display: flex; align-items: center; gap: 8px; padding: 16px 24px; }
   #pagination span { color: #94a3b8; font-size: 0.82rem; }
-  .detail-row td { white-space: pre-wrap; word-break: break-word; background: #1e293b; font-size: 0.78rem; color: #94a3b8; max-width: none; }
+  .detail-row td { white-space: pre-wrap; word-break: break-word; background: #0f172a; font-size: 0.78rem; color: #94a3b8; max-width: none; padding: 16px 20px; }
+  .detail-inner { display: flex; gap: 16px; align-items: flex-start; }
+  .detail-actions { display: flex; gap: 8px; margin-bottom: 12px; flex-shrink: 0; flex-direction: column; }
+  .btn-view { background: #0284c7; color: #fff; border: none; border-radius: 6px; padding: 7px 14px; font-size: 0.8rem; cursor: pointer; white-space: nowrap; }
+  .btn-view:hover { background: #0369a1; }
+  .btn-dl { background: #334155; color: #e2e8f0; border: none; border-radius: 6px; padding: 7px 14px; font-size: 0.8rem; cursor: pointer; white-space: nowrap; }
+  .btn-dl:hover { background: #475569; }
+  .json-wrap { flex: 1; overflow: auto; }
+  pre.json { background: #0f172a; border: 1px solid #1e293b; border-radius: 6px; padding: 12px; font-size: 0.75rem; color: #94a3b8; max-height: 340px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
   #loader { text-align: center; padding: 40px; color: #94a3b8; }
   .ext { background: #1e3a5f; color: #7dd3fc; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+  .act-btns { display: flex; gap: 6px; }
+  .act-btns button { padding: 4px 10px; font-size: 0.75rem; }
 </style>
 </head>
 <body>
@@ -51,6 +62,7 @@ _HTML = """<!DOCTYPE html>
     <div class="stat"><div class="stat-num" id="s-ok" style="color:#34d399">…</div><div class="stat-lbl">Extraídos</div></div>
     <div class="stat"><div class="stat-num" id="s-fail" style="color:#f87171">…</div><div class="stat-lbl">Fallidos</div></div>
     <div class="stat"><div class="stat-num" id="s-pend" style="color:#a8a29e">…</div><div class="stat-lbl">Pendientes</div></div>
+    <div class="stat"><div class="stat-num" id="s-sim" style="color:#7dd3fc">…</div><div class="stat-lbl">Simulados</div></div>
   </div>
 </header>
 <div class="toolbar">
@@ -63,6 +75,7 @@ _HTML = """<!DOCTYPE html>
     <option value="true">Contenido extraído</option>
     <option value="false">Extracción fallida</option>
     <option value="pending">Pendiente</option>
+    <option value="simulated">Simulados (seed)</option>
   </select>
   <select id="limit-sel" onchange="load()">
     <option value="20">20 por página</option>
@@ -76,9 +89,9 @@ _HTML = """<!DOCTYPE html>
 
 <script>
 let page = 1, total = 0, _debounce;
+let _docs = [];
 
-// Works whether accessed directly (port 8001) or via Nginx (/api/)
-const BASE = window.location.pathname.replace(/\/admin\/viewer.*/, '');
+const BASE = window.location.pathname.replace(/\\/admin\\/viewer.*/, '');
 
 function debounceSearch() { clearTimeout(_debounce); _debounce = setTimeout(() => { page=1; load(); }, 350); }
 
@@ -94,11 +107,12 @@ async function load() {
   if (ext)  url += `&ext=${encodeURIComponent(ext)}`;
   if (extr) url += `&extracted=${encodeURIComponent(extr)}`;
 
-  document.getElementById('loader') && (document.getElementById('content').innerHTML = '<div id="loader">Cargando…</div>');
+  document.getElementById('content').innerHTML = '<div id="loader">Cargando…</div>';
   const res  = await fetch(url);
   const data = await res.json();
-  total = data.total;
-  renderTable(data.docs);
+  total  = data.total;
+  _docs  = data.docs;
+  renderTable(_docs);
   renderPagination(total, limit);
   loadStats();
   populateExtFilter(data.extensions || []);
@@ -111,6 +125,7 @@ async function loadStats() {
   document.getElementById('s-ok').textContent    = s.extracted;
   document.getElementById('s-fail').textContent  = s.failed;
   document.getElementById('s-pend').textContent  = s.pending;
+  document.getElementById('s-sim').textContent   = s.simulated !== undefined ? s.simulated : '—';
 }
 
 function populateExtFilter(exts) {
@@ -124,46 +139,81 @@ function renderTable(docs) {
   if (!docs.length) { document.getElementById('content').innerHTML = '<div id="loader">Sin resultados.</div>'; return; }
   let html = `<table><thead><tr>
     <th>ID</th><th>Código</th><th>Título</th><th>Categoría</th><th>Dpto.</th>
-    <th>Archivo</th><th>Ext</th><th>Tamaño</th><th>Contenido</th><th>Sync</th>
+    <th>Archivo</th><th>Ext</th><th>Tamaño</th><th>Contenido</th><th>Sync</th><th>Acciones</th>
   </tr></thead><tbody>`;
   docs.forEach((d, i) => {
-    const extr = d.content_extraction_error === 'pending'
-      ? '<span class="badge pend">pendiente</span>'
-      : d.content_extracted
-        ? '<span class="badge ok">✓ OK</span>'
-        : `<span class="badge fail" title="${d.content_extraction_error||''}">✗ error</span>`;
+    const isSim = d.is_simulated;
+    let extrBadge;
+    if (isSim) {
+      extrBadge = '<span class="badge sim">◆ simulado</span>';
+    } else if (d.content_extraction_error === 'pending') {
+      extrBadge = '<span class="badge pend">pendiente</span>';
+    } else if (d.content_extracted) {
+      extrBadge = '<span class="badge ok">✓ OK</span>';
+    } else {
+      extrBadge = `<span class="badge fail" title="${d.content_extraction_error||''}">✗ error</span>`;
+    }
     const size = d.size ? (d.size > 1048576 ? (d.size/1048576).toFixed(1)+' MB' : (d.size/1024).toFixed(0)+' KB') : '—';
     const sync = d.sync_date ? d.sync_date.replace('T',' ').substring(0,19) : '—';
+    const fname = d.file_name || '';
     html += `<tr onclick="toggleDetail(${i})" style="cursor:pointer">
       <td style="color:#94a3b8">${d.postgres_id||'—'}</td>
-      <td style="font-family:monospace;color:#7dd3fc">${d.code||'—'}</td>
-      <td title="${d.title||''}">${d.title||'—'}</td>
-      <td>${d.category_name||'—'}</td>
-      <td>${d.department_name||'—'}</td>
-      <td title="${d.file_name||''}" style="max-width:160px">${d.file_name||'—'}</td>
-      <td><span class="ext">${d.extension||'—'}</span></td>
+      <td style="font-family:monospace;color:#7dd3fc">${esc(d.code||'—')}</td>
+      <td title="${esc(d.title||'')}">${esc(d.title||'—')}</td>
+      <td>${esc(d.category_name||'—')}</td>
+      <td>${esc(d.department_name||'—')}</td>
+      <td title="${esc(fname)}" style="max-width:160px">${esc(fname||'—')}</td>
+      <td><span class="ext">${esc(d.extension||'—')}</span></td>
       <td>${size}</td>
-      <td>${extr}</td>
+      <td>${extrBadge}</td>
       <td style="color:#94a3b8;font-size:0.75rem">${sync}</td>
+      <td class="act-btns" onclick="event.stopPropagation()">
+        ${fname ? `<button class="btn-view" onclick="viewFile('${esc(fname)}')">Ver</button>
+                   <button class="btn-dl"   onclick="dlFile('${esc(fname)}')">↓ DL</button>` : '—'}
+      </td>
     </tr>
-    <tr id="detail-${i}" style="display:none"><td colspan="10" class="detail-row">${formatDetail(d)}</td></tr>`;
+    <tr id="detail-${i}" style="display:none">
+      <td colspan="11" class="detail-row">
+        <div class="detail-inner">
+          <div class="detail-actions">
+            ${fname ? `<button class="btn-view" onclick="viewFile('${esc(fname)}')">🔍 Ver documento</button>
+                       <button class="btn-dl"   onclick="dlFile('${esc(fname)}')">⬇ Descargar</button>` : '<span style="color:#64748b;font-size:0.8rem">Sin archivo</span>'}
+            ${isSim ? '<span class="badge sim" style="margin-top:8px">Datos simulados</span>' : ''}
+          </div>
+          <div class="json-wrap">
+            <pre class="json" id="json-${i}">Cargando JSON…</pre>
+          </div>
+        </div>
+      </td>
+    </tr>`;
   });
   html += '</tbody></table>';
   document.getElementById('content').innerHTML = html;
 }
 
-function formatDetail(d) {
-  const preview = (d.content||'').substring(0,500).replace(/</g,'&lt;');
-  return `<b>postgres_id:</b> ${d.postgres_id}  <b>document_id:</b> ${d.document_id}  <b>version:</b> ${d.version}  <b>is_active:</b> ${d.is_active}
-<b>file_url:</b> ${d.file_url||'—'}  <b>mime_type:</b> ${d.mime_type||'—'}
-<b>extraction_error:</b> ${d.content_extraction_error||'none'}
-<b>content preview (500 chars):</b>
-${preview||'(vacío)'}`;
-}
-
 function toggleDetail(i) {
   const row = document.getElementById('detail-'+i);
-  row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
+  const pre = document.getElementById('json-'+i);
+  const isHidden = row.style.display === 'none';
+  row.style.display = isHidden ? 'table-row' : 'none';
+  if (isHidden && _docs[i] && pre.textContent === 'Cargando JSON…') {
+    const clone = Object.assign({}, _docs[i]);
+    delete clone.content; // no mostrar el texto completo (puede ser muy largo)
+    pre.textContent = JSON.stringify(clone, null, 2);
+  }
+}
+
+function viewFile(name) {
+  window.open(`${BASE}/indexer/file/${encodeURIComponent(name)}`, '_blank');
+}
+
+function dlFile(name) {
+  window.location.href = `${BASE}/indexer/download/${encodeURIComponent(name)}`;
+}
+
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 function renderPagination(total, limit) {
@@ -188,18 +238,21 @@ async def viewer():
 @router.get("/stats")
 async def stats():
     total     = await collection.count_documents({})
-    extracted = await collection.count_documents({"content_extracted": True})
+    extracted = await collection.count_documents({"content_extracted": True, "is_simulated": {"$ne": True}})
     failed    = await collection.count_documents({"content_extracted": False,
-                                                   "content_extraction_error": {"$ne": "pending"}})
+                                                   "content_extraction_error": {"$ne": "pending"},
+                                                   "is_simulated": {"$ne": True}})
     pending   = await collection.count_documents({"content_extraction_error": "pending"})
-    return {"total": total, "extracted": extracted, "failed": failed, "pending": pending}
+    simulated = await collection.count_documents({"is_simulated": True})
+    return {"total": total, "extracted": extracted, "failed": failed,
+            "pending": pending, "simulated": simulated}
 
 
 @router.get("/docs")
 async def list_docs(
     q:         str  = Query(default="", description="Filter by title/code/category"),
     ext:       str  = Query(default="", description="Filter by file extension"),
-    extracted: str  = Query(default="", description="true | false | pending"),
+    extracted: str  = Query(default="", description="true | false | pending | simulated"),
     limit:     int  = Query(default=20, le=200),
     skip:      int  = Query(default=0, ge=0),
 ):
@@ -217,18 +270,22 @@ async def list_docs(
         filt["extension"] = ext
     if extracted == "true":
         filt["content_extracted"] = True
+        filt["is_simulated"] = {"$ne": True}
     elif extracted == "false":
         filt["content_extracted"] = False
         filt["content_extraction_error"] = {"$ne": "pending"}
+        filt["is_simulated"] = {"$ne": True}
     elif extracted == "pending":
         filt["content_extraction_error"] = "pending"
+    elif extracted == "simulated":
+        filt["is_simulated"] = True
 
     projection = {
         "_id": 0, "postgres_id": 1, "document_id": 1, "code": 1, "title": 1,
         "category_name": 1, "department_name": 1, "version": 1, "is_active": 1,
         "file_name": 1, "extension": 1, "mime_type": 1, "size": 1, "file_url": 1,
         "content_extracted": 1, "content_extraction_error": 1, "sync_date": 1,
-        "content": {"$substr": ["$content", 0, 500]},
+        "is_simulated": 1, "company_id": 1, "company_name": 1,
     }
 
     total = await collection.count_documents(filt)
