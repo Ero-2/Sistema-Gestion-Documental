@@ -38,8 +38,27 @@ public class DocumentsController(IMediator mediator, QualityDMSDbContext db, IFi
         var doc = await mediator.Send(new GetDocumentByIdQuery(id), ct);
         if (doc is null) return NotFound();
 
+        // CreatedBy guarda el Id (GUID) del usuario; resolverlo a nombre legible
+        // para no mostrar el identificador crudo en la vista.
+        ViewBag.CreatedByName = await ResolveUserNameAsync(doc.CreatedBy, ct);
         ViewData["Title"] = $"Documento: {doc.Code}";
         return View(doc);
+    }
+
+    /// <summary>Mapea un Id de usuario a "Nombre Apellido"; fallback a usuario/Id si no se encuentra.</summary>
+    private async Task<string> ResolveUserNameAsync(string? userId, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(userId)) return "—";
+        if (userId == "seed") return "Sistema";
+
+        var u = await db.Users.IgnoreQueryFilters()
+            .Where(x => x.Id == userId)
+            .Select(x => new { x.FirstName, x.LastName, x.UserName })
+            .FirstOrDefaultAsync(ct);
+        if (u is null) return userId;
+
+        var full = $"{u.FirstName} {u.LastName}".Trim();
+        return full.Length > 0 ? full : (u.UserName ?? userId);
     }
 
     [Authorize(Roles = "DocumentManager,QualityManager,Admin")]

@@ -60,7 +60,8 @@ def _authorize(authorization: Optional[str], x_api_key: Optional[str]) -> dict:
 async def list_documents(
     q: Optional[str] = Query(default=None, description="Término de búsqueda (opcional)"),
     company_id: Optional[int] = Query(default=None, description="Filtrar por empresa (multiempresa)"),
-    limit: int = Query(default=200, le=500),
+    limit: int = Query(default=100, ge=1, le=500, description="Documentos por página"),
+    offset: int = Query(default=0, ge=0, description="Desplazamiento para paginación"),
     authorization: Optional[str] = Header(default=None),
     x_api_key: Optional[str] = Header(default=None),
 ):
@@ -69,6 +70,8 @@ async def list_documents(
     Sin `q`: devuelve todos los documentos (orden por sync_date desc).
     Con `q` (>=2): búsqueda full-text (título, código, categoría, depto y contenido).
     `company_id`: acota a una empresa (aislamiento multiempresa).
+    Paginación: `limit` (tamaño de página) + `offset` (salto). `total` es el conteo
+    completo del filtro (independiente de la página) para que el cliente pueda paginar.
     """
     _authorize(authorization, x_api_key)
 
@@ -93,15 +96,22 @@ async def list_documents(
                 {"content": rx},
             ],
         }
-        cursor = collection.find(flt, _PROJECTION).sort("sync_date", -1).limit(limit)
     else:
-        cursor = collection.find(base, _PROJECTION).sort("sync_date", -1).limit(limit)
+        flt = base
 
+    total = await collection.count_documents(flt)
+    cursor = collection.find(flt, _PROJECTION).sort("sync_date", -1).skip(offset).limit(limit)
     docs = await cursor.to_list(length=limit)
     for d in docs:
         d.pop("score", None)
 
-    return {"documents": docs, "count": len(docs)}
+    return {
+        "documents": docs,
+        "count": len(docs),
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }
 
 
 @router.get("/search", response_class=HTMLResponse)
@@ -203,6 +213,9 @@ body {
   margin-top: 12px; font-family: var(--mono); font-size: 12px; color: var(--tx-3);
 }
 .meta-line .count b { color: var(--accent); font-weight: 600; }
+.meta-line .range { color: var(--tx-3); font-variant-numeric: tabular-nums; }
+.meta-line .range::before { content: '['; color: var(--tx-4); margin-right: 2px; }
+.meta-line .range::after { content: ']'; color: var(--tx-4); margin-left: 2px; }
 .meta-line .src { color: var(--tx-4); }
 .meta-line .stat { color: var(--tx-3); }
 .meta-line .stat b { color: var(--vigente); font-weight: 500; }
@@ -264,6 +277,24 @@ body {
 .cursor { display: inline-block; width: 8px; height: 15px; background: var(--accent); vertical-align: -2px; animation: blink 1s step-end infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 
+/* ── Pager ────────────────────────────────────────────── */
+.pager {
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 28px 24px 8px; font-family: var(--mono); font-size: 12px;
+}
+.pager:empty { display: none; }
+.pg-btn {
+  font-family: var(--mono); font-size: 12px; color: var(--tx-2);
+  background: transparent; border: 1px solid var(--bd-2);
+  border-radius: 4px; padding: 6px 13px; cursor: pointer;
+  transition: border-color .12s ease, color .12s ease;
+}
+.pg-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.pg-btn:disabled { color: var(--tx-4); border-color: var(--bd-1); cursor: not-allowed; }
+.pg-info { color: var(--tx-3); padding: 0 14px; font-variant-numeric: tabular-nums; }
+.pg-info b { color: var(--accent); font-weight: 600; }
+.pg-info .of { color: var(--tx-4); }
+
 /* ── Responsive ───────────────────────────────────────── */
 @media (max-width: 720px) {
   .reg-head { display: none; }
@@ -298,8 +329,9 @@ body {
     <button class="clear" id="clear" onclick="clearQ()">esc</button>
   </div>
   <div class="meta-line">
-    <span class="count"><b id="count">0</b> documentos</span>
-    <span class="stat"><b id="vig">0</b> vigentes</span>
+    <span class="count"><b id="total">0</b> documentos</span>
+    <span class="range" id="range">—</span>
+    <span class="stat"><b id="vig">0</b> vigentes en página</span>
     <span class="src">idx:mongo · full-text</span>
     <div class="chips" id="chips"></div>
   </div>
@@ -311,6 +343,7 @@ body {
     <div>ver.</div><div>estado</div><div></div>
   </div>
   <div id="rows"></div>
+  <nav class="pager" id="pager"></nav>
 </main>
 
 <script>
@@ -319,7 +352,10 @@ if (!token) location.href = '/auth/login';
 const uname = localStorage.getItem('user_name') || 'sesión';
 document.getElementById('who').innerHTML = '<b>' + uname.toLowerCase().replace(/\\s+/g,'.') + '</b>@qualitydms';
 
-let allDocs = [];
+const PAGE = 100;          // documentos por página (servidor)
+let pageDocs = [];         // página actual recibida del servidor
+let total = 0;             // total de documentos que matchean el filtro
+let offset = 0;            // desplazamiento de la página actual
 let activeDept = null;
 let _t;
 
@@ -330,26 +366,32 @@ const clrBtn= document.getElementById('clear');
 qIn.addEventListener('input', () => {
   clrBtn.style.display = qIn.value ? 'block' : 'none';
   clearTimeout(_t);
-  _t = setTimeout(fetchDocs, 320);
+  _t = setTimeout(() => fetchDocs(true), 320);
 });
 qIn.addEventListener('keydown', e => { if (e.key === 'Escape') clearQ(); });
 
-function clearQ() { qIn.value = ''; clrBtn.style.display = 'none'; fetchDocs(); }
+function clearQ() { qIn.value = ''; clrBtn.style.display = 'none'; fetchDocs(true); }
 
 function showState(html, cls) {
   rows.innerHTML = '<div class="state ' + (cls||'') + '">' + html + '</div>';
 }
 
-async function fetchDocs() {
+// resetPage=true: nueva consulta (vuelve a la primera página).
+// resetPage=false: navegación entre páginas (conserva offset).
+async function fetchDocs(resetPage) {
+  if (resetPage) offset = 0;
   const q = qIn.value.trim();
   showState('consultando índice <span class="cursor"></span>');
+  document.getElementById('pager').innerHTML = '';
   try {
-    const url = '/search/documents?limit=300' + (q.length >= 2 ? '&q=' + encodeURIComponent(q) : '');
+    let url = '/search/documents?limit=' + PAGE + '&offset=' + offset;
+    if (q.length >= 2) url += '&q=' + encodeURIComponent(q);
     const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
     if (res.status === 401) { logout(); return; }
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
-    allDocs = data.documents || [];
+    pageDocs = data.documents || [];
+    total = data.total || 0;
     activeDept = null;
     buildChips();
     render();
@@ -358,8 +400,29 @@ async function fetchDocs() {
   }
 }
 
+function gotoPage(newOffset) {
+  offset = Math.max(0, newOffset);
+  fetchDocs(false);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+function renderPager() {
+  const pager = document.getElementById('pager');
+  if (total <= PAGE) { pager.innerHTML = ''; return; }
+  const page    = Math.floor(offset / PAGE) + 1;
+  const pages   = Math.ceil(total / PAGE);
+  const canPrev = offset > 0;
+  const canNext = offset + PAGE < total;
+  pager.innerHTML =
+    '<button class="pg-btn" ' + (canPrev ? '' : 'disabled') +
+      ' onclick="gotoPage(' + (offset - PAGE) + ')">&lsaquo; anterior</button>' +
+    '<span class="pg-info">pág <b>' + page + '</b> <span class="of">de</span> ' + pages + '</span>' +
+    '<button class="pg-btn" ' + (canNext ? '' : 'disabled') +
+      ' onclick="gotoPage(' + (offset + PAGE) + ')">siguiente &rsaquo;</button>';
+}
+
 function buildChips() {
-  const depts = [...new Set(allDocs.map(d => d.department_name).filter(Boolean))].sort();
+  const depts = [...new Set(pageDocs.map(d => d.department_name).filter(Boolean))].sort();
   const chips = document.getElementById('chips');
   if (depts.length <= 1) { chips.innerHTML = ''; return; }
   chips.innerHTML =
@@ -375,12 +438,16 @@ function filterDept(el, dept) {
 }
 
 function render() {
-  const docs = activeDept ? allDocs.filter(d => d.department_name === activeDept) : allDocs;
-  document.getElementById('count').textContent = docs.length;
+  const docs = activeDept ? pageDocs.filter(d => d.department_name === activeDept) : pageDocs;
+  const start = total ? offset + 1 : 0;
+  const end   = offset + pageDocs.length;
+  document.getElementById('total').textContent = total.toLocaleString('es');
+  document.getElementById('range').textContent = total ? (start + '–' + end) : 'vacío';
   document.getElementById('vig').textContent = docs.filter(d => d.is_active !== false).length;
 
   if (!docs.length) {
     const q = qIn.value.trim();
+    renderPager();
     showState(
       '<div class="big">sin registros</div><div class="hint">' +
       (q ? 'ningún documento coincide con «' + esc(q) + '»' : 'no hay documentos indexados todavía') +
@@ -406,6 +473,8 @@ function render() {
       +   '<div class="c-open">' + (file ? '&rsaquo;' : '') + '</div>'
       + '</div>';
   }).join('');
+
+  renderPager();
 }
 
 function openFile(name) {
@@ -422,7 +491,7 @@ function logout() {
   location.href = '/auth/login';
 }
 
-fetchDocs();
+fetchDocs(true);
 </script>
 </body>
 </html>"""

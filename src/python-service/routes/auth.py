@@ -124,183 +124,227 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)):
 
 @router.get("/login", response_class=HTMLResponse)
 async def login_page():
-    """Página de login para FastAPI."""
+    """Página de login para FastAPI — consola dms://auth."""
     return """<!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login — DMS Search Engine</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <style>
-        body {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        }
-        .login-card {
-            background: white;
-            border-radius: 12px;
-            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-            width: 100%;
-            max-width: 400px;
-            padding: 40px;
-        }
-        .login-header {
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        .login-header h1 {
-            font-size: 28px;
-            font-weight: 700;
-            color: #333;
-            margin-bottom: 5px;
-        }
-        .login-header p {
-            color: #999;
-            font-size: 14px;
-        }
-        .form-control {
-            border-radius: 8px;
-            border: 1px solid #ddd;
-            padding: 12px 15px;
-            font-size: 14px;
-            margin-bottom: 15px;
-        }
-        .form-control:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-        .btn-login {
-            width: 100%;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            color: white;
-            border: none;
-            padding: 12px;
-            border-radius: 8px;
-            font-weight: 600;
-            font-size: 15px;
-            cursor: pointer;
-            transition: transform 0.2s;
-        }
-        .btn-login:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
-            color: white;
-        }
-        .btn-login:disabled {
-            opacity: 0.7;
-            cursor: not-allowed;
-            transform: none;
-        }
-        .alert-danger {
-            border-radius: 8px;
-            margin-bottom: 20px;
-            border: none;
-            background: #f8d7da;
-            color: #721c24;
-        }
-        .spinner-border {
-            display: none;
-            width: 16px;
-            height: 16px;
-            margin-right: 8px;
-        }
-        .spinner-border.show {
-            display: inline-block;
-        }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>dms://auth</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  /* surfaces — cool slate, whisper-quiet elevation (idéntico a /search) */
+  --bg:        #0e1217;
+  --surface-1: #141a21;
+  --surface-2: #19212a;
+  /* inputs — inset, un punto más oscuros que su contenedor */
+  --field:     #10151b;
+  /* text hierarchy */
+  --tx-1: #d7dee5;
+  --tx-2: #9aa7b2;
+  --tx-3: #6b7682;
+  --tx-4: #4a535c;
+  /* single accent — the live index signal */
+  --accent: #4fd1c5;
+  --accent-dim: rgba(79,209,197,0.14);
+  /* semantic */
+  --vigente: #5fb89a;
+  --inactivo: #c79a55;
+  --danger: #e0727a;
+  --danger-dim: rgba(224,114,122,0.12);
+  /* borders — low-opacity cool, disappear until needed */
+  --bd-1: rgba(200,215,225,0.08);
+  --bd-2: rgba(200,215,225,0.14);
+  --bd-3: rgba(200,215,225,0.22);
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--tx-1);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  display: flex; align-items: center; justify-content: center;
+  /* retícula técnica casi imperceptible — textura de consola */
+  background-image:
+    linear-gradient(var(--bd-1) 1px, transparent 1px),
+    linear-gradient(90deg, var(--bd-1) 1px, transparent 1px);
+  background-size: 44px 44px;
+  background-position: center;
+}
+::selection { background: var(--accent-dim); }
+
+.panel {
+  width: 100%; max-width: 380px; margin: 24px;
+  background: var(--surface-1);
+  border: 1px solid var(--bd-2);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+/* ── Cabecera de la consola ───────────────────────────── */
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--bd-2);
+  background: var(--bg);
+}
+.brand { font-family: var(--mono); font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.brand .scheme { color: var(--accent); }
+.brand .path { color: var(--tx-3); }
+.led-line { display: flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 11px; color: var(--tx-3); }
+.led { width: 6px; height: 6px; border-radius: 50%; background: var(--inactivo); transition: background .2s, box-shadow .2s; }
+.led.on { background: var(--vigente); box-shadow: 0 0 6px rgba(95,184,154,0.6); }
+
+/* ── Cuerpo ───────────────────────────────────────────── */
+.panel-body { padding: 26px 22px 22px; }
+.intro { font-family: var(--mono); font-size: 11px; color: var(--tx-4); margin-bottom: 22px; }
+.intro .caret { color: var(--accent); }
+
+.field { margin-bottom: 16px; }
+.field label {
+  display: block; font-family: var(--mono); font-size: 10px;
+  text-transform: uppercase; letter-spacing: 0.1em; color: var(--tx-3);
+  margin-bottom: 7px;
+}
+.field input {
+  width: 100%; height: 42px; padding: 0 13px;
+  background: var(--field); color: var(--tx-1);
+  font-family: var(--mono); font-size: 13px;
+  border: 1px solid var(--bd-2); border-radius: 5px;
+  outline: none; transition: border-color .12s ease;
+}
+.field input::placeholder { color: var(--tx-4); }
+.field input:focus { border-color: var(--accent); }
+
+.btn-auth {
+  width: 100%; height: 44px; margin-top: 6px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  font-family: var(--mono); font-size: 13px; font-weight: 500; letter-spacing: 0.02em;
+  color: var(--accent); background: var(--accent-dim);
+  border: 1px solid var(--accent); border-radius: 5px;
+  cursor: pointer; transition: background .12s ease, opacity .12s ease;
+}
+.btn-auth:hover:not(:disabled) { background: rgba(79,209,197,0.22); }
+.btn-auth:disabled { opacity: 0.55; cursor: not-allowed; }
+.btn-auth .arrow { transition: transform .12s ease; }
+.btn-auth:hover:not(:disabled) .arrow { transform: translateX(3px); }
+
+/* ── Línea de estado (feedback de consola) ───────────── */
+.status {
+  font-family: var(--mono); font-size: 11px; min-height: 18px;
+  margin-top: 16px; color: var(--tx-3);
+}
+.status.err { color: var(--danger); }
+.status.err::before { content: '! '; }
+.status.run::before { content: '> '; color: var(--accent); }
+.cursor { display: inline-block; width: 7px; height: 13px; background: var(--accent); vertical-align: -2px; margin-left: 2px; animation: blink 1s step-end infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ── Pie ──────────────────────────────────────────────── */
+.panel-foot {
+  padding: 12px 18px;
+  border-top: 1px solid var(--bd-1);
+  font-family: var(--mono); font-size: 10px; color: var(--tx-4);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.panel-foot .dot { color: var(--bd-3); }
+</style>
 </head>
 <body>
 
-<div class="login-card">
-    <div class="login-header">
-        <h1>DMS Search</h1>
-        <p>Motor de Búsqueda Documental</p>
+<form class="panel" id="loginForm" autocomplete="on">
+  <div class="panel-head">
+    <div class="brand"><span class="scheme">dms://</span><span class="path">auth</span></div>
+    <div class="led-line"><span class="led" id="led"></span><span id="ledTxt">en espera</span></div>
+  </div>
+
+  <div class="panel-body">
+    <div class="intro"><span class="caret">&gt;</span> identifícate para acceder al índice documental</div>
+
+    <div class="field">
+      <label for="email">credencial</label>
+      <input type="email" id="email" name="email" required spellcheck="false"
+             autocomplete="username" placeholder="usuario@qualitydms.local">
     </div>
 
-    <div id="errorAlert"></div>
-
-    <form id="loginForm">
-        <div class="mb-3">
-            <label for="email" class="form-label">Email</label>
-            <input type="email" class="form-control" id="email" name="email" required placeholder="usuario@example.com">
-        </div>
-
-        <div class="mb-3">
-            <label for="password" class="form-label">Contraseña</label>
-            <input type="password" class="form-control" id="password" name="password" required placeholder="••••••••">
-        </div>
-
-        <button type="submit" class="btn btn-login" id="submitBtn">
-            <span class="spinner-border" role="status" aria-hidden="true"></span>
-            Iniciar Sesión
-        </button>
-    </form>
-
-    <div style="text-align: center; margin-top: 20px; color: #999; font-size: 12px;">
-        <p>Autenticación centralizada.</p>
-        <p>Credenciales validadas por servidor central.</p>
+    <div class="field">
+      <label for="password">clave</label>
+      <input type="password" id="password" name="password" required
+             autocomplete="current-password" placeholder="••••••••">
     </div>
-</div>
+
+    <button type="submit" class="btn-auth" id="submitBtn">
+      <span id="btnTxt">autenticar</span><span class="arrow">&rsaquo;</span>
+    </button>
+
+    <div class="status" id="status"></div>
+  </div>
+
+  <div class="panel-foot">
+    <span>jwt · 8h</span>
+    <span class="dot">·</span>
+    <span>validación: servidor central</span>
+  </div>
+</form>
 
 <script>
-document.getElementById('loginForm').addEventListener('submit', async (e) => {
-    e.preventDefault();
+const form   = document.getElementById('loginForm');
+const btn    = document.getElementById('submitBtn');
+const btnTxt = document.getElementById('btnTxt');
+const status = document.getElementById('status');
+const led    = document.getElementById('led');
+const ledTxt = document.getElementById('ledTxt');
 
-    const email = document.getElementById('email').value;
-    const password = document.getElementById('password').value;
-    const submitBtn = document.getElementById('submitBtn');
-    const spinner = submitBtn.querySelector('.spinner-border');
-    const errorAlert = document.getElementById('errorAlert');
+function setStatus(msg, cls) {
+  status.className = 'status' + (cls ? ' ' + cls : '');
+  status.innerHTML = msg;
+}
 
-    // Limpiar errores
-    errorAlert.innerHTML = '';
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const email = document.getElementById('email').value.trim();
+  const password = document.getElementById('password').value;
 
-    // Mostrar spinner
-    submitBtn.disabled = true;
-    spinner.classList.add('show');
+  btn.disabled = true;
+  btnTxt.textContent = 'verificando';
+  led.classList.remove('on'); ledTxt.textContent = 'validando';
+  setStatus('validando credenciales <span class="cursor"></span>', 'run');
 
-    try {
-        const response = await fetch('/auth/login', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({ email, password })
-        });
+  try {
+    const res = await fetch('/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    const data = await res.json();
 
-        const data = await response.json();
-
-        if (response.ok) {
-            // Login exitoso - guardar token
-            localStorage.setItem('access_token', data.access_token);
-            localStorage.setItem('user_name', data.user_name);
-            localStorage.setItem('roles', JSON.stringify(data.roles));
-            window.location.href = '/search';
-        } else {
-            // Error
-            errorAlert.innerHTML = `<div class="alert alert-danger alert-dismissible fade show" role="alert">
-                ${data.detail || 'Error en autenticación'}
-                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-            </div>`;
-            submitBtn.disabled = false;
-            spinner.classList.remove('show');
-        }
-    } catch (error) {
-        errorAlert.innerHTML = `<div class="alert alert-danger alert-dismissible fade show" role="alert">
-            Error de conexión: ${error.message}
-            <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
-        </div>`;
-        submitBtn.disabled = false;
-        spinner.classList.remove('show');
+    if (res.ok) {
+      localStorage.setItem('access_token', data.access_token);
+      localStorage.setItem('user_name', data.user_name);
+      localStorage.setItem('roles', JSON.stringify(data.roles));
+      led.classList.add('on'); ledTxt.textContent = 'autenticado';
+      setStatus('sesión establecida — abriendo índice <span class="cursor"></span>', 'run');
+      setTimeout(() => { window.location.href = '/search'; }, 350);
+    } else {
+      ledTxt.textContent = 'rechazado';
+      setStatus(data.detail || 'credenciales inválidas', 'err');
+      btn.disabled = false; btnTxt.textContent = 'autenticar';
     }
+  } catch (err) {
+    ledTxt.textContent = 'sin conexión';
+    setStatus('error de conexión — ' + err.message, 'err');
+    btn.disabled = false; btnTxt.textContent = 'autenticar';
+  }
 });
 </script>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
 </body>
 </html>"""

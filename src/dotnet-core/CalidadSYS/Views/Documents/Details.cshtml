@@ -82,7 +82,7 @@
                         @(Model.NextReviewDate?.ToString("dd/MM/yyyy") ?? "-")
                     </div>
                     <div class="col-sm-3 text-muted small fw-semibold">Creado por</div>
-                    <div class="col-sm-9 small">@Model.CreatedBy - @Model.CreatedAt.ToString("dd/MM/yyyy")</div>
+                    <div class="col-sm-9 small">@(ViewBag.CreatedByName ?? Model.CreatedBy) - @Model.CreatedAt.ToString("dd/MM/yyyy")</div>
                 </div>
             </div>
         </div>
