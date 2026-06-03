@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using QualityDMS.Application;
@@ -27,6 +28,8 @@ builder.Services.ConfigureApplicationCookie(opts =>
     opts.ExpireTimeSpan = TimeSpan.FromHours(8);
     opts.SlidingExpiration = true;
     opts.Cookie.Name = "QualityDMS.Auth";
+    opts.Cookie.SameSite = SameSiteMode.Lax;
+    opts.Cookie.SecurePolicy = CookieSecurePolicy.SameAsRequest;
 });
 
 builder.Services.AddAuthentication()
@@ -91,6 +94,17 @@ builder.Services.AddResponseCaching();
 
 var app = builder.Build();
 
+// Confiar en X-Forwarded-For / X-Forwarded-Proto de nginx (que a su vez recibe de ngrok).
+// Limpiar KnownNetworks/KnownProxies para aceptar cualquier proxy interno de Docker.
+// DEBE ser el primer middleware del pipeline.
+var fwdOpts = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
+};
+fwdOpts.KnownNetworks.Clear();
+fwdOpts.KnownProxies.Clear();
+app.UseForwardedHeaders(fwdOpts);
+
 // Detrás de Nginx con routing por path (/dotnet): respeta el prefijo público.
 // Tag helpers, cookies y static files usan PathBase automáticamente.
 // Sin header (acceso directo :5080) → PathBase vacío → funciona igual.
@@ -154,6 +168,16 @@ app.MapControllerRoute(
 
 app.MapControllers();
 
+// Healthcheck endpoint — responde inmediatamente al arrancar, ANTES del seeding.
+// Permite que nginx y Docker detecten disponibilidad real del servicio.
+app.MapGet("/health", () => Results.Ok(new { status = "healthy" }));
+
+// CRÍTICO: iniciar Kestrel ANTES del seeding.
+// Sin esto, el contenedor está "running" pero :8080 no escucha hasta que termina
+// el seed (hasta 10+ min en modo sandbox), causando 502 en nginx y fallos de
+// autenticación en PHP y FastAPI que llaman a /api/v1/auth/validate.
+await app.StartAsync();
+
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<QualityDMSDbContext>();
@@ -184,4 +208,4 @@ using (var scope = app.Services.CreateScope())
     }
 }
 
-app.Run();
+await app.WaitForShutdownAsync();

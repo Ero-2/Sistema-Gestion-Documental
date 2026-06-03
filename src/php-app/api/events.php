@@ -17,7 +17,7 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 }
 
 // Validar API Key
-$apiKey = $_ENV['FASTAPI_API_KEY'] ?? '';
+$apiKey = getenv('FASTAPI_API_KEY') ?: '';
 $headerKey = $_SERVER['HTTP_X_API_KEY'] ?? '';
 
 if (empty($apiKey) || $headerKey !== $apiKey) {
