@@ -151,7 +151,7 @@
         @if (User.IsInRole("Admin") || User.IsInRole("QualityManager"))
         {
             <div class="nav-label">API</div>
-            <a class="nav-link" href="/swagger" target="_blank">
+            <a class="nav-link" href="@Url.Content("~/swagger")" target="_blank">
                 <i class="bi bi-code-slash"></i> Swagger API
             </a>
         }

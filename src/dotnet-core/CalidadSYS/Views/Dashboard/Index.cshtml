@@ -100,7 +100,7 @@
     </div>
     <div class="col-sm-6 col-xl-3">
         <div class="card stat-card p-3 h-100 d-flex flex-column justify-content-center align-items-center">
-            <a href="/Documents/Create"
+            <a href="@(Context.Request.PathBase)/Documents/Create"
                class="btn btn-primary w-100 @(User.IsInRole("Admin") || User.IsInRole("QualityManager") || User.IsInRole("DocumentManager") ? "" : "disabled")">
                 <i class="bi bi-plus-circle me-1"></i> Nuevo Documento
             </a>

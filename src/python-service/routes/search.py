@@ -82,20 +82,82 @@ async def list_documents(
     """
     _authorize(authorization, x_api_key)
 
-    # Filtro base: empresa + estado activo/obsoleto
-    base: dict = {}
-    if company_id is not None:
-        base["company_id"] = company_id
-    if status == "obsolete":
-        base["is_active"] = False
-    elif status != "all":
-        base["is_active"] = {"$ne": False}  # vigentes (True o sin campo)
+    company_flt: dict = {"company_id": company_id} if company_id is not None else {}
 
     term = (q or "").strip()
+
+    # ── Obsoletos: versiones históricas (version_history) + documentos retirados ─
+    if status == "obsolete":
+        search_cond: dict = {}
+        if term:
+            rx = {"$regex": re.escape(term), "$options": "i"}
+            search_cond = {"$or": [
+                {"title": rx}, {"code": rx},
+                {"category_name": rx}, {"department_name": rx},
+                {"content": rx},
+            ]}
+
+        # 1. Documentos completamente retirados (is_active: false)
+        retired_flt = {"is_active": False, **company_flt, **search_cond}
+        retired_docs = await collection.find(retired_flt, _PROJECTION).sort("sync_date", -1).to_list(length=None)
+
+        # 2. Versiones anteriores: $unwind de version_history.
+        #    Cada entrada del array se convierte en un resultado independiente.
+        #    file_name/file_url del padre (versión vigente) sirven para el visor.
+        vh_flt = {"version_history.0": {"$exists": True}, **company_flt, **search_cond}
+        history_docs = await collection.aggregate([
+            {"$match": vh_flt},
+            {"$unwind": "$version_history"},
+            {"$project": {
+                "_id": 0,
+                "postgres_id": 1,
+                "code": 1,
+                "title": 1,
+                "category_name": 1,
+                "department_name": 1,
+                "company_id": 1,
+                "company_name": 1,
+                "is_simulated": 1,
+                "is_active": {"$literal": False},
+                "content_extracted": 1,
+                # file de la versión vieja (para viewer/descarga en PHP y FastAPI)
+                "file_name": "$version_history.file_name",
+                "file_url": "$version_history.file_url",
+                "extension": {"$arrayElemAt": [
+                    {"$split": [{"$ifNull": ["$version_history.file_name", ""]}, "."]}, -1,
+                ]},
+                "mime_type": 1,
+                "size": 1,
+                "file_meta": 1,
+                "sync_date": "$version_history.obsoleted_at",
+                "version": "$version_history.version",
+                # file_name del doc padre — visor de FastAPI lo usa para lookup por MongoDB
+                "viewer_name": "$file_name",
+            }},
+        ]).to_list(length=None)
+
+        combined = history_docs + retired_docs
+        combined.sort(key=lambda d: d.get("sync_date") or "", reverse=True)
+
+        total = len(combined)
+        page = combined[offset: offset + limit]
+        for d in page:
+            d.pop("score", None)
+
+        return {
+            "documents": page,
+            "count": len(page),
+            "total": total,
+            "offset": offset,
+            "limit": limit,
+        }
+
+    # ── Vigentes / all ────────────────────────────────────────────────────────────
+    base: dict = {**company_flt}
+    if status != "all":
+        base["is_active"] = {"$ne": False}
+
     if term:
-        # Substring case-insensitive (type-ahead): "proc" matchea "Procedimiento".
-        # $text de Mongo solo matchea palabras completas → usamos regex sobre los
-        # campos clave (incluye contenido extraído para buscar dentro de PDF/Word/Excel).
         rx = {"$regex": re.escape(term), "$options": "i"}
         flt = {
             **base,
@@ -548,7 +610,7 @@ function render() {
   document.getElementById('range').textContent = total ? (start + '–' + end) : 'vacío';
   document.getElementById('vig').textContent = docs.filter(d => d.is_active !== false).length;
   _expandedIdx = null;
-  _files = docs.map(d => d.file_name || '');
+  _files = docs.map(d => d.viewer_name || d.file_name || '');
 
   if (!docs.length) {
     const q = qIn.value.trim();
@@ -703,7 +765,7 @@ function toggleMeta(i) {
 }
 
 function openFile(i) {
-  window.open('/indexer/viewer/' + encodeURIComponent(_files[i]), '_blank');
+  window.open(BASE + '/indexer/viewer/' + encodeURIComponent(_files[i]), '_blank');
 }
 
 function dlFile(i) {

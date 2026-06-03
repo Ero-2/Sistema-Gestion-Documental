@@ -73,8 +73,8 @@ class APIKeyMiddleware(BaseHTTPMiddleware):
         if path.startswith("/auth/"):
             return await call_next(request)
 
-        # Consulta pública de archivos y visor (abierto en nueva pestaña, sin header)
-        if path.startswith("/indexer/file/") or path.startswith("/indexer/viewer/"):
+        # Consulta pública de archivos, visor y descarga (browser requests, sin header)
+        if path.startswith("/indexer/file/") or path.startswith("/indexer/viewer/") or path.startswith("/indexer/download/"):
             return await call_next(request)
 
         # Check API key for other endpoints

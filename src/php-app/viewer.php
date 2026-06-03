@@ -67,8 +67,14 @@ $imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg', 'avif', 'ico'];
 $textExts  = ['txt', 'csv', 'log', 'json', 'xml', 'yaml', 'yml', 'ini', 'md', 'tsv', 'conf'];
 $htmlExts  = ['html', 'htm'];
 
+// PPTX/PPT → FastAPI viewer renderiza diapositivas con python-pptx
+if (in_array($ext, ['pptx', 'ppt'])) {
+    header('Location: /fastapi/indexer/viewer/' . rawurlencode($filename));
+    exit;
+}
+
 // Formatos sin render nativo en navegador: se previsualiza el texto que FastAPI
-// ya extrajo (ppt, pptx, odt, ods, odp, rtf, doc viejo, etc.).
+// ya extrajo (odt, ods, odp, rtf, doc viejo, etc.).
 $nativeExts = array_merge(['pdf', 'docx', 'xlsx', 'xls'], $imageExts, $textExts, $htmlExts);
 
 /**

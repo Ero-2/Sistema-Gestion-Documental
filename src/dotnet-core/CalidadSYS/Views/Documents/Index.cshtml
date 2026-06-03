@@ -8,7 +8,7 @@
     <h5 class="mb-0 fw-bold">Documentos</h5>
     @if (User.IsInRole("Admin") || User.IsInRole("QualityManager") || User.IsInRole("DocumentManager"))
     {
-        <a href="/Documents/Create" class="btn btn-primary btn-sm">
+        <a href="@(Context.Request.PathBase)/Documents/Create" class="btn btn-primary btn-sm">
             <i class="bi bi-plus-circle me-1"></i> Nuevo Documento
         </a>
     }

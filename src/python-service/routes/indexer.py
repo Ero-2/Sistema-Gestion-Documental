@@ -1,4 +1,5 @@
 import asyncio
+import html as _html_escape
 import os
 from datetime import datetime, timezone
 
@@ -9,6 +10,66 @@ from database import collection
 from extractor import MAX_CONTENT_CHARS, STORAGE_ROOT, extract_text, extract_file_metadata, get_file_info, resolve_path
 from models import PublicDMSMetadata
 from pydantic import BaseModel
+
+
+def _pptx_to_slides_html(path: str) -> str:
+    """Convierte un archivo PPTX en HTML de diapositivas usando python-pptx."""
+    from pptx import Presentation
+    from pptx.util import Pt
+    from pptx.enum.text import PP_ALIGN
+
+    prs = Presentation(path)
+    slides_html = []
+
+    for i, slide in enumerate(prs.slides, 1):
+        shapes_by_y = sorted(
+            (s for s in slide.shapes if s.has_text_frame),
+            key=lambda s: (s.top or 0),
+        )
+
+        title_text = ""
+        body_parts = []
+
+        for shape in shapes_by_y:
+            tf = shape.text_frame
+            lines = []
+            for para in tf.paragraphs:
+                line = para.text.strip()
+                if not line:
+                    continue
+                size = 0
+                for run in para.runs:
+                    if run.font.size:
+                        size = max(size, run.font.size.pt)
+                bold = any(r.font.bold for r in para.runs if r.font.bold is not None)
+                lines.append((line, size, bold))
+
+            if not lines:
+                continue
+
+            if not title_text and lines:
+                title_text = lines[0][0]
+                rest = lines[1:]
+            else:
+                rest = lines
+
+            for text, size, bold in rest:
+                tag = "strong" if bold or size >= 20 else "span"
+                body_parts.append(f'<{tag}>{_html_escape.escape(text)}</{tag}>')
+
+        slide_num = f'<span class="slide-num">{i}/{len(prs.slides)}</span>'
+        title_html = f'<h2>{_html_escape.escape(title_text)}</h2>' if title_text else ''
+        body_html = "<br>".join(body_parts)
+
+        slides_html.append(
+            f'<div class="slide">{slide_num}{title_html}'
+            f'<div class="slide-body">{body_html}</div></div>'
+        )
+
+    if not slides_html:
+        return '<p style="color:#9aa7b2;padding:2rem">Sin contenido visible en las diapositivas.</p>'
+
+    return "\n".join(slides_html)
 
 
 class ObsoleteRequest(BaseModel):
@@ -115,6 +176,10 @@ async def upsert_document(metadata: PublicDMSMetadata):
     try:
         doc_data = metadata.model_dump()
         doc_data["sync_date"] = datetime.now(timezone.utc).isoformat()
+
+        # Never overwrite a real file_url with an empty string from a re-sync
+        if not metadata.file_url:
+            doc_data.pop("file_url", None)
 
         if metadata.file_url:
             if _is_seed(metadata.file_url):
@@ -231,17 +296,18 @@ async def get_file(name: str):
     """
     doc = await collection.find_one(
         {"file_name": name},
-        {"_id": 0, "file_url": 1, "file_name": 1, "mime_type": 1,
+        {"_id": 0, "file_url": 1, "path": 1, "file_name": 1, "mime_type": 1,
          "is_simulated": 1, "title": 1, "code": 1,
          "category_name": 1, "department_name": 1, "version": 1},
     )
-    if not doc or not doc.get("file_url"):
+    _furl = (doc.get("file_url") or doc.get("path", "")) if doc else ""
+    if not doc or not _furl:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
 
-    if doc.get("is_simulated") or _is_seed(doc.get("file_url", "")):
+    if doc.get("is_simulated") or _is_seed(_furl):
         return HTMLResponse(content=_simulated_html(doc))
 
-    real = os.path.realpath(resolve_path(doc["file_url"]))
+    real = os.path.realpath(resolve_path(_furl))
     root = os.path.realpath(STORAGE_ROOT)
     if real != root and not real.startswith(root + os.sep):
         raise HTTPException(status_code=403, detail="Ruta inválida")
@@ -263,19 +329,20 @@ async def download_file(name: str):
     """
     doc = await collection.find_one(
         {"file_name": name},
-        {"_id": 0, "file_url": 1, "file_name": 1, "mime_type": 1, "is_simulated": 1},
+        {"_id": 0, "file_url": 1, "path": 1, "file_name": 1, "mime_type": 1, "is_simulated": 1},
     )
-    if not doc or not doc.get("file_url"):
+    _furl = (doc.get("file_url") or doc.get("path", "")) if doc else ""
+    if not doc or not _furl:
         raise HTTPException(status_code=404, detail="Documento no encontrado")
 
-    if doc.get("is_simulated") or _is_seed(doc.get("file_url", "")):
+    if doc.get("is_simulated") or _is_seed(_furl):
         raise HTTPException(
             status_code=422,
             detail="Documento simulado — no existe archivo físico para descargar. "
                    "Fue generado mediante datos de prueba (Faker).",
         )
 
-    real = os.path.realpath(resolve_path(doc["file_url"]))
+    real = os.path.realpath(resolve_path(_furl))
     root = os.path.realpath(STORAGE_ROOT)
     if real != root and not real.startswith(root + os.sep):
         raise HTTPException(status_code=403, detail="Ruta inválida")
@@ -304,7 +371,7 @@ async def viewer_page(name: str, request: Request):
         {"_id": 0, "title": 1, "code": 1, "extension": 1, "mime_type": 1,
          "is_simulated": 1, "content": 1, "content_extracted": 1,
          "content_extraction_error": 1, "category_name": 1, "department_name": 1,
-         "version": 1, "file_url": 1},
+         "version": 1, "file_url": 1, "path": 1},
     )
 
     import json as _json
@@ -403,6 +470,17 @@ iframe {{ width: 100%; height: 100%; border: none; }}
 #sheet-wrap th {{ background: var(--surface-2); color: var(--tx-2); padding: 6px 10px; border: 1px solid var(--bd-2); white-space: nowrap; }}
 #sheet-wrap td {{ border: 1px solid var(--bd-1); padding: 5px 10px; color: var(--tx-1); }}
 #text-wrap {{ padding: 24px 28px; }}
+/* ── PPTX slides ── */
+#pptx-wrap {{ padding: 24px 32px; max-width: 900px; margin: 0 auto; }}
+.slide {{
+  background: var(--surface-1); border: 1px solid var(--bd-2);
+  border-radius: 8px; padding: 28px 32px; margin-bottom: 20px;
+  position: relative;
+}}
+.slide-num {{ position: absolute; top: 10px; right: 14px; font-family: var(--mono); font-size: 11px; color: var(--tx-4); }}
+.slide h2 {{ font-size: 1.15rem; font-weight: 600; color: var(--tx-1); margin-bottom: 14px; padding-bottom: 10px; border-bottom: 1px solid var(--bd-1); }}
+.slide-body {{ font-size: .9rem; color: var(--tx-2); line-height: 1.7; }}
+.slide-body strong {{ color: var(--tx-1); font-weight: 600; display: block; margin-top: 6px; }}
 #text-wrap pre {{ background: var(--surface-1); border: 1px solid var(--bd-1); border-radius: 6px; padding: 16px; font-family: var(--mono); font-size: 13px; color: #a8e6cf; white-space: pre-wrap; word-break: break-word; line-height: 1.6; }}
 .preview-note {{
   background: var(--surface-2); border: 1px solid var(--bd-2);
@@ -519,6 +597,29 @@ function renderSheet(n) {{
   document.getElementById('sheet-wrap').innerHTML = XLSX.utils.sheet_to_html(_wb.Sheets[n], {{ editable: false }});
 }}
 </script>"""
+
+    elif ext in {"pptx", "ppt"}:
+        _pptx_url = doc.get("file_url") or doc.get("path", "")
+        real = os.path.realpath(resolve_path(_pptx_url))
+        root = os.path.realpath(STORAGE_ROOT)
+        if os.path.isfile(real) and (real == root or real.startswith(root + os.sep)):
+            try:
+                slides_html = await asyncio.to_thread(_pptx_to_slides_html, real)
+                html += f'<div id="pptx-wrap">{slides_html}</div>'
+            except Exception as e:
+                import html as _h
+                html += f'<div id="text-wrap"><div class="preview-note">Error al renderizar PPTX: {_h.escape(str(e))} <a href="{dlUrl}">&#8595; Descargar</a></div></div>'
+        elif content and doc.get("content_extracted"):
+            import html as _h
+            safe = _h.escape(content[:80000])
+            html += f'<div id="text-wrap"><div class="preview-note">Vista previa de texto (.{ext}) <a href="{dlUrl}">&#8595; Descargar original</a></div><pre>{safe}</pre></div>'
+        else:
+            html += f"""<div class="center-page"><div class="unsup-card">
+  <div class="unsup-icon">📊</div>
+  <h3>Archivo no disponible</h3>
+  <p>El archivo <strong>.{ext}</strong> no se encontró en el servidor.</p>
+  <a href="{dlUrl}" class="dl-btn">&#8595; Descargar {name}</a>
+</div></div>"""
 
     elif ext in TEXT_EXTS:
         # Texto disponible directamente desde MongoDB si fue extraído
