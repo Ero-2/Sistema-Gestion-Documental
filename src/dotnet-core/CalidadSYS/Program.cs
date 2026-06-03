@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using QualityDMS.Application;
@@ -11,6 +12,12 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+// Persiste las claves Data Protection para que los tokens de antiforgery y las cookies
+// de autenticación sobrevivan reinicios del contenedor.
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo("/app/dp-keys"))
+    .SetApplicationName("QualityDMS");
 
 builder.Services.ConfigureApplicationCookie(opts =>
 {
@@ -132,7 +139,6 @@ app.Use(async (context, next) =>
     }
 });
 
-app.UseHttpsRedirection();
 app.UseResponseCaching();
 app.UseStaticFiles();
 app.UseRouting();

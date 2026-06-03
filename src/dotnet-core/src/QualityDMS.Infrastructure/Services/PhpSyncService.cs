@@ -40,7 +40,7 @@ public class PhpSyncService(
             next_review_date = nextReviewDate
         };
 
-        await SendWithRetryAsync("/api/events.php?action=approve", payload,
+        await SendWithRetryAsync("api/events.php?action=approve", payload,
             $"Doc {documentId} aprobado en PHP");
     }
 
@@ -58,7 +58,7 @@ public class PhpSyncService(
             next_review_date = nextReviewDate
         };
 
-        await SendWithRetryAsync("/api/events.php?action=update", payload,
+        await SendWithRetryAsync("api/events.php?action=update", payload,
             $"Doc {documentId} actualizado en PHP");
     }
 
@@ -72,7 +72,7 @@ public class PhpSyncService(
             created_at = DateTime.UtcNow
         };
 
-        await SendWithRetryAsync("/api/events.php?action=version", payload,
+        await SendWithRetryAsync("api/events.php?action=version", payload,
             $"Doc {documentId} v{version} en PHP");
     }
 
@@ -85,7 +85,7 @@ public class PhpSyncService(
             effective_at = DateTime.UtcNow
         };
 
-        await SendWithRetryAsync("/api/events.php?action=obsolete", payload,
+        await SendWithRetryAsync("api/events.php?action=obsolete", payload,
             $"Doc {documentId} obsoleto en PHP");
     }
 
@@ -168,13 +168,17 @@ public class PhpSyncService(
 
                 if ((int)response.StatusCode < 500)
                 {
-                    logger.LogWarning("✗ API error [{Status}] {Message}",
-                        response.StatusCode, logMessage);
-                    return;
+                    // 4xx = error definitivo del cliente, no reintentable
+                    throw new HttpRequestException(
+                        $"PHP API [{response.StatusCode}] {logMessage}");
                 }
 
                 logger.LogWarning("✗ Attempt {Attempt}/{MaxRetries} failed [{Status}]: {Message}",
                     attempt, MaxRetries, response.StatusCode, logMessage);
+            }
+            catch (HttpRequestException)
+            {
+                throw; // propaga 4xx al llamador
             }
             catch (Exception ex)
             {
@@ -187,6 +191,7 @@ public class PhpSyncService(
         }
 
         logger.LogError("✗ Failed after {MaxRetries} attempts: {Message}", MaxRetries, logMessage);
+        throw new HttpRequestException($"PHP API failed after {MaxRetries} attempts: {logMessage}");
     }
 
     private async Task SendMetadataWithRetryAsync(string fullUrl, object payload, string apiKey, string logMessage)

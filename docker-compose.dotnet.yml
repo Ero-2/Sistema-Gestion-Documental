@@ -55,12 +55,13 @@ services:
       Storage__LocalPath:       /app/uploads
       PublicDms__WebhookUrl:    http://dms_fastapi:8000
       PublicDms__ApiKey:        ${FASTAPI_API_KEY}
-      PublicDms__PhpSyncUrl:    http://dms_nginx
+      PublicDms__PhpSyncUrl:    http://dms_nginx/php
       DMS_SEED_MODE:            ${DMS_SEED_MODE:-dev}
     ports:
       - "127.0.0.1:${DOTNET_PORT:-5080}:8080"
     volumes:
       - documentos:/app/uploads
+      - dp_keys:/app/dp-keys
     depends_on:
       sqlserver:
         condition: service_healthy
@@ -89,6 +90,9 @@ volumes:
   documentos:
     external: true
     name: documentos
+  dp_keys:
+    name: dms_dp_keys
+    driver: local
 
 # ══════════════════════════════════════════════════════════
 #  Redes

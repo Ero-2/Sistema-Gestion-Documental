@@ -159,10 +159,10 @@ function Get-StackList {
 
 # Asegura red compartida + volumen externo de documentos (idempotente).
 function Initialize-SharedInfra {
-    $null = docker network inspect dms_backbone 2>&1
+    try { docker network inspect dms_backbone *>$null } catch {}
     if ($LASTEXITCODE -ne 0) { docker network create dms_backbone | Out-Null; Write-Ok "Red dms_backbone creada" }
     else { Write-Info "Red dms_backbone ya existe" }
-    $null = docker volume inspect documentos 2>&1
+    try { docker volume inspect documentos *>$null } catch {}
     if ($LASTEXITCODE -ne 0) { docker volume create documentos | Out-Null; Write-Ok "Volumen 'documentos' creado" }
     else { Write-Info "Volumen 'documentos' ya existe" }
 }

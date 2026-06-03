@@ -53,21 +53,84 @@ public static class DbSeeder
         var db      = services.GetRequiredService<QualityDMSDbContext>();
         var config  = services.GetRequiredService<IConfiguration>();
 
-        // Idempotencia: si ya hay más de 20 documentos, el sandbox ya se sembró
+        var sw = Stopwatch.StartNew();
+        List<ApprovedDocInfo> approvedSnapshot;
+
+        // ── SQL Server: sembrar solo si no hay datos ──────────────────────────
         if (await db.Documents.CountAsync() > 20)
         {
-            logger.LogInformation("DbSeeder sandbox: ya sembrado, omitiendo.");
+            logger.LogInformation("DbSeeder sandbox: SQL ya sembrado — reconstruyendo snapshot para verificar APIs.");
+            approvedSnapshot = await BuildApprovedSnapshotFromDbAsync(db);
+        }
+        else
+        {
+            approvedSnapshot = await SeedSqlServerAsync(db, logger, sw);
+        }
+
+        // ── Esperar que PHP y FastAPI estén listos ────────────────────────────
+        await WaitForServicesAsync(config, logger);
+
+        // ── Verificar si PHP ya tiene datos (evita push innecesario) ─────────
+        var phpUrl = config["PublicDms:PhpSyncUrl"] ?? "http://dms_nginx/php";
+        bool phpNeedsData = await PhpIsEmptyAsync(phpUrl, logger);
+
+        if (!phpNeedsData)
+        {
+            logger.LogInformation("DbSeeder sandbox: PHP ya tiene documentos — omitiendo push.");
             return;
         }
 
-        const int Total       = 10_000;
-        const int BatchSize   = 500;
+        // ── Propagar documentos aprobados a PHP y FastAPI ─────────────────────
+        logger.LogInformation("DbSeeder sandbox: PHP vacío — propagando {Count} docs aprobados...",
+            approvedSnapshot.Count);
+
+        var phpSync = services.GetRequiredService<IPhpSyncService>();
+        var webhook = services.GetRequiredService<IPublicDmsWebhookService>();
+
         const int Concurrency = 10;
+        int apiSuccess = 0, apiFail = 0;
+
+        await Parallel.ForEachAsync(approvedSnapshot, new ParallelOptions { MaxDegreeOfParallelism = Concurrency },
+            async (info, ct) =>
+            {
+                try
+                {
+                    await phpSync.ApproveDocumentAsync(
+                        info.Doc.DocumentId, info.Doc.Code, info.Doc.Title,
+                        info.CategoryId, info.CategoryName,
+                        info.DepartmentId, info.DepartmentName,
+                        info.Version, info.FileUrl, info.EffectiveDate, null, info.EffectiveDate,
+                        info.CompanyId, info.CompanyName);
+
+                    await webhook.NotifyDocumentApprovedAsync(
+                        info.Doc.DocumentId, info.Doc.Code, info.Doc.Title,
+                        info.CategoryName, info.DepartmentName,
+                        info.Version, info.FileUrl, info.CompanyId, info.CompanyName);
+
+                    Interlocked.Increment(ref apiSuccess);
+                }
+                catch (Exception ex)
+                {
+                    Interlocked.Increment(ref apiFail);
+                    logger.LogWarning("[Seed] Doc {Id} ({Code}) → API error: {Msg}",
+                        info.Doc.DocumentId, info.Doc.Code, ex.Message);
+                }
+            });
+
+        logger.LogInformation(
+            "DbSeeder sandbox: completo en {Elapsed}s — {Ok} docs propagados, {Fail} fallos de API.",
+            (int)sw.Elapsed.TotalSeconds, apiSuccess, apiFail);
+    }
+
+    // ── Siembra los 10,000 docs en SQL Server y devuelve los aprobados ────────
+    private static async Task<List<ApprovedDocInfo>> SeedSqlServerAsync(
+        QualityDMSDbContext db, ILogger logger, Stopwatch sw)
+    {
+        const int Total     = 10_000;
+        const int BatchSize = 500;
 
         logger.LogInformation("DbSeeder sandbox: generando {Total} documentos...", Total);
-        var sw = Stopwatch.StartNew();
 
-        // Datos de referencia
         var acme  = await db.Companies.FirstAsync(c => c.Code == "ACME");
         var cats  = await db.DocumentCategories.Where(c => c.CompanyId == acme.CompanyId).ToListAsync();
         var depts = await db.Departments.Where(d => d.CompanyId == acme.CompanyId).ToListAsync();
@@ -76,11 +139,8 @@ public static class DbSeeder
 
         var faker = new Faker("es");
         var now   = DateTime.UtcNow;
-
-        // Recopila los documentos aprobados para llamar a las APIs luego
         var approvedSnapshot = new List<ApprovedDocInfo>();
 
-        // ── Inserción en SQL Server por lotes ─────────────────────────────────
         for (int batch = 0; batch < Total / BatchSize; batch++)
         {
             var docs = new List<Document>(BatchSize);
@@ -101,6 +161,8 @@ public static class DbSeeder
                 int roll = idx % 10;
                 if (roll < 7)
                 {
+                    var effective = now.AddDays(-faker.Random.Int(1, 365));
+                    var fileUrl   = $"seed/{code}-v1.pdf";
                     doc.AddVersion(new DocumentVersion
                     {
                         VersionNumber = "0.1", IsCurrent = false, Status = VersionStatus.Draft,
@@ -111,16 +173,16 @@ public static class DbSeeder
                     doc.AddVersion(new DocumentVersion
                     {
                         VersionNumber = "1.0", IsCurrent = true, Status = VersionStatus.Approved,
-                        FilePath = $"seed/{code}-v1.pdf", FileName = $"{code}-v1.pdf",
+                        FilePath = fileUrl, FileName = $"{code}-v1.pdf",
                         FileSizeBytes = 0, ContentType = "application/pdf",
                         ChangeLog = "Versión aprobada (seed)",
-                        ApprovedBy = gerente.Id, ApprovedAt = now.AddDays(-faker.Random.Int(1, 365)),
+                        ApprovedBy = gerente.Id, ApprovedAt = effective,
                         CreatedBy = gerente.Id,
                     });
                     doc.RecalculateStatus();
                     approvedSnapshot.Add(new ApprovedDocInfo(
                         doc, cat.CategoryId, cat.Name, dept.DepartmentId, dept.Name,
-                        acme.CompanyId, acme.Name));
+                        acme.CompanyId, acme.Name, "1.0", fileUrl, effective));
                 }
                 else if (roll < 9)
                 {
@@ -154,49 +216,63 @@ public static class DbSeeder
                 batch + 1, Total / BatchSize, (int)sw.Elapsed.TotalSeconds);
         }
 
-        logger.LogInformation("DbSeeder sandbox: {Count} docs insertados en SQL Server en {Elapsed}s. Propagando a PHP y FastAPI...",
+        logger.LogInformation("DbSeeder sandbox: {Count} docs insertados en SQL Server en {Elapsed}s.",
             Total, (int)sw.Elapsed.TotalSeconds);
 
-        // ── Esperar que PHP y FastAPI estén listos ────────────────────────────
-        await WaitForServicesAsync(config, logger);
+        return approvedSnapshot;
+    }
 
-        // ── Propagar documentos aprobados a PHP y FastAPI vía APIs ────────────
-        var phpSync = services.GetRequiredService<IPhpSyncService>();
-        var webhook = services.GetRequiredService<IPublicDmsWebhookService>();
+    // ── Reconstruye el snapshot de aprobados desde SQL Server existente ───────
+    private static async Task<List<ApprovedDocInfo>> BuildApprovedSnapshotFromDbAsync(QualityDMSDbContext db)
+    {
+        var approved = await db.Documents
+            .AsNoTracking()
+            .Include(d => d.Company)
+            .Include(d => d.Category)
+            .Include(d => d.Department)
+            .Include(d => d.Versions)
+            .Where(d => d.Status == DocumentStatus.Approved)
+            .ToListAsync();
 
-        int apiSuccess = 0, apiFail = 0;
-
-        await Parallel.ForEachAsync(approvedSnapshot, new ParallelOptions { MaxDegreeOfParallelism = Concurrency },
-            async (info, ct) =>
+        return approved
+            .Select(doc =>
             {
-                try
-                {
-                    var fileUrl = $"seed/{info.Doc.Code}-v1.pdf";
-                    var effective = now.AddDays(-faker.Random.Int(1, 180));
+                var ver = doc.Versions.FirstOrDefault(v => v.IsCurrent && v.Status == VersionStatus.Approved);
+                if (ver is null) return null;
+                return new ApprovedDocInfo(
+                    doc,
+                    doc.CategoryId,  doc.Category?.Name  ?? "Unknown",
+                    doc.DepartmentId, doc.Department?.Name ?? "Unknown",
+                    doc.CompanyId,   doc.Company?.Name   ?? string.Empty,
+                    ver.VersionNumber,
+                    ver.FilePath ?? string.Empty,
+                    ver.ApprovedAt ?? DateTime.UtcNow);
+            })
+            .Where(x => x is not null)
+            .Cast<ApprovedDocInfo>()
+            .ToList();
+    }
 
-                    await phpSync.ApproveDocumentAsync(
-                        info.Doc.DocumentId, info.Doc.Code, info.Doc.Title,
-                        info.CategoryId, info.CategoryName,
-                        info.DepartmentId, info.DepartmentName,
-                        "1.0", fileUrl, effective, null, effective,
-                        info.CompanyId, info.CompanyName);
-
-                    await webhook.NotifyDocumentApprovedAsync(
-                        info.Doc.DocumentId, info.Doc.Code, info.Doc.Title,
-                        info.CategoryName, info.DepartmentName,
-                        "1.0", fileUrl, info.CompanyId, info.CompanyName);
-
-                    Interlocked.Increment(ref apiSuccess);
-                }
-                catch
-                {
-                    Interlocked.Increment(ref apiFail);
-                }
-            });
-
-        logger.LogInformation(
-            "DbSeeder sandbox: completo en {Elapsed}s — {Ok} docs propagados, {Fail} fallos de API.",
-            (int)sw.Elapsed.TotalSeconds, apiSuccess, apiFail);
+    // ── Devuelve true si PHP/PostgreSQL no tiene documentos activos ───────────
+    private static async Task<bool> PhpIsEmptyAsync(string phpBaseUrl, ILogger logger)
+    {
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+            var url = $"{phpBaseUrl.TrimEnd('/')}/api/documents/documents.php?limit=1";
+            var resp = await http.GetStringAsync(url);
+            var json = System.Text.Json.JsonDocument.Parse(resp);
+            var total = json.RootElement
+                .GetProperty("pagination")
+                .GetProperty("total")
+                .GetInt32();
+            return total == 0;
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning("[Seed] No se pudo verificar conteo en PHP: {Msg} — asumiendo vacío.", ex.Message);
+            return true;
+        }
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -205,7 +281,8 @@ public static class DbSeeder
         Document Doc,
         int CategoryId, string CategoryName,
         int DepartmentId, string DepartmentName,
-        int CompanyId, string CompanyName);
+        int CompanyId, string CompanyName,
+        string Version, string FileUrl, DateTime EffectiveDate);
 
     private static string BuildTitle(Faker faker, string catCode, string deptName)
     {

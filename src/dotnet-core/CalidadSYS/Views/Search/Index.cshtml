@@ -65,16 +65,19 @@
         timer = setTimeout(() => run(q), 220);
     });
 
+    const searchUrl = '@Url.Action("Api", "Search")';
+
     async function run(q) {
         const reqId = ++lastReqId;
         spin.style.display = '';
         try {
-            const res = await fetch('/Search/Api?q=' + encodeURIComponent(q));
+            const res = await fetch(searchUrl + '?q=' + encodeURIComponent(q));
+            if (!res.ok) throw new Error('HTTP ' + res.status);
             const data = await res.json();
             if (reqId !== lastReqId) return; // descarta respuestas viejas
             render(data, q);
         } catch (e) {
-            if (reqId === lastReqId) msg('Error de conexión con la API de búsqueda.');
+            if (reqId === lastReqId) msg('Error de conexión con la API de búsqueda: ' + e.message);
         } finally {
             if (reqId === lastReqId) spin.style.display = 'none';
         }

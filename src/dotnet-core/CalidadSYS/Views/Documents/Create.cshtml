@@ -80,6 +80,7 @@
 
 @section Scripts {
 <script>
+    const _base = '@Context.Request.PathBase';
     document.getElementById('createForm').addEventListener('submit', async function (e) {
         e.preventDefault();
 
@@ -115,14 +116,14 @@
         try {
             const formData = new FormData(this);
 
-            const response = await fetch('/api/v1/Documents', {
+            const response = await fetch(_base + '/api/v1/Documents', {
                 method: 'POST',
                 body: formData
             });
 
             if (response.status === 201 || response.ok) {
                 const data = await response.json();
-                window.location.href = `/Documents/Details/${data.id}`;
+                window.location.href = _base + `/Documents/Details/${data.id}`;
                 return;
             }
 

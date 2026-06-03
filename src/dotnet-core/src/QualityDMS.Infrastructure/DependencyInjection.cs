@@ -71,11 +71,12 @@ public static class DependencyInjection
                 client.DefaultRequestHeaders.Add("X-API-Key", fastapiKey);
         });
 
-        var phpUrl = configuration["PublicDms:PhpSyncUrl"] ?? "http://dms_nginx";
+        var phpUrl = configuration["PublicDms:PhpSyncUrl"] ?? "http://dms_nginx/php";
         var apiKey = configuration["PublicDms:ApiKey"] ?? "";
         services.AddHttpClient<IPhpSyncService, PhpSyncService>(client =>
         {
-            client.BaseAddress = new Uri(phpUrl);
+            // BaseAddress MUST end with '/' for relative endpoint paths to resolve correctly
+            client.BaseAddress = new Uri(phpUrl.TrimEnd('/') + "/");
             client.Timeout     = TimeSpan.FromSeconds(5);
             if (!string.IsNullOrEmpty(apiKey))
                 client.DefaultRequestHeaders.Add("X-API-Key", apiKey);
