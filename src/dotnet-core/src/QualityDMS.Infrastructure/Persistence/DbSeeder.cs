@@ -245,8 +245,8 @@ public static class DbSeeder
 
     private static async Task WaitForServicesAsync(IConfiguration config, ILogger logger)
     {
-        var fastapiUrl = config["PublicDms:WebhookUrl"] ?? "http://fastapi:8000";
-        var phpUrl     = config["PublicDms:PhpSyncUrl"] ?? "http://php";
+        var fastapiUrl = config["PublicDms:WebhookUrl"] ?? "http://dms_fastapi:8000";
+        var phpUrl     = config["PublicDms:PhpSyncUrl"] ?? "http://dms_nginx";
 
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         await PollUntilReachableAsync(http, $"{fastapiUrl}/health", "FastAPI", logger);

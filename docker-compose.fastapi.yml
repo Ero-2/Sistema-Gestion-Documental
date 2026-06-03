@@ -1,15 +1,17 @@
 # ══════════════════════════════════════════════════════════
-#  Stack 3 — FastAPI + MongoDB (Motor de búsqueda)
-#  Arrancar:   docker compose --env-file .env.indexer -f compose-indexer.yml up -d --build
-#  Detener:    docker compose -f compose-indexer.yml down
+#  Grupo 3 — FastAPI  (Motor de búsqueda / Indexación) + Nginx
+#  Servicios: dms_mongodb + dms_fastapi + dms_nginx
+#  Arrancar:  docker compose -p dms-fastapi -f docker-compose.fastapi.yml --env-file .env up -d --build
+#  Detener:   docker compose -p dms-fastapi -f docker-compose.fastapi.yml down
+#  Requiere:  red 'dms_backbone' y volumen 'documentos' creados previamente.
+#  Nginx = punto de entrada único:
+#    :80   → PHP-FPM (dms_php:9000)   | :8443 → FastAPI (dms_fastapi:8000)
+#    :8084 → .NET    (dms_dotnet:8080)
 # ══════════════════════════════════════════════════════════
 
 services:
 
-  # ──────────────────────────────────────────────────────
-  # MongoDB 7 — Índice de búsqueda full-text
-  # Solo accesible desde indexer_internal.
-  # ──────────────────────────────────────────────────────
+  # ── MongoDB 7 — Índice full-text + metadatos ──────────────
   mongodb:
     image: mongo:7
     container_name: dms_mongodb
@@ -18,9 +20,9 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
       MONGO_INITDB_DATABASE:      dms_metadata
     ports:
-      - "127.0.0.1:27018:27017"
+      - "127.0.0.1:${MONGO_HOST_PORT:-27018}:27017"
     volumes:
-      - mongo_data:/data/db
+      - mongodb_data:/data/db
       - ./db/mongo:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
@@ -41,12 +43,8 @@ services:
           cpus: '1.0'
           memory: 512M
 
-  # ──────────────────────────────────────────────────────
-  # FastAPI (Python 3.12) — Indexación y búsqueda
-  # Recibe eventos HTTP desde .NET y sincroniza con MongoDB.
-  # POSTGRES_* expuesto para documents_sync.py (acceso
-  # cross-stack a la BD del stack PHP).
-  # ──────────────────────────────────────────────────────
+  # ── FastAPI (Python 3.12) — Indexación y búsqueda ─────────
+  # Recibe eventos de .NET; lee archivos de 'documentos' (r/o).
   fastapi:
     build:
       context: ./src/python-service
@@ -56,19 +54,19 @@ services:
       DATABASE_NAME:     dms_metadata
       FASTAPI_API_KEY:   ${FASTAPI_API_KEY}
       JWT_SECRET:        ${JWT_SECRET}
-      DOTNET_API_URL:    ${DOTNET_API_URL:-http://dotnet:8080}
+      DOTNET_API_URL:    http://dms_dotnet:8080
       DMS_STORAGE_PATH:  /app/uploads
-      # PostgreSQL cross-stack — usado por documents_sync.py
-      # En despliegue multi-servidor: apuntar a la IP/hostname del servidor PHP
-      POSTGRES_HOST:     ${POSTGRES_HOST:-postgres}
+      # PostgreSQL cross-stack (documents_sync.py) — apunta al stack PHP vía backbone
+      POSTGRES_HOST:     ${POSTGRES_HOST:-dms_postgres}
       POSTGRES_PORT:     ${POSTGRES_PORT:-5432}
       POSTGRES_DB:       ${POSTGRES_DB:-PublicDMS}
       POSTGRES_USER:     ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - ./data/uploads:/app/uploads:ro
+      - documentos:/app/uploads:ro
+      - indices_busqueda:/app/indices
     ports:
-      - "127.0.0.1:8001:8000"
+      - "127.0.0.1:${FASTAPI_PORT:-8001}:8000"
     expose:
       - "8000"
     depends_on:
@@ -89,24 +87,58 @@ services:
           cpus: '0.5'
           memory: 256M
 
+  # ── Nginx — Punto de entrada único (reverse proxy + HTTPS) ─
+  # Resuelve dms_php / dms_dotnet / dms_fastapi por container name
+  # sobre la red dms_backbone (cross-stack).
+  nginx:
+    build:
+      context: ./docker/nginx
+    container_name: dms_nginx
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-8443}:443"
+      - "${NGINX_DOTNET_PORT:-8084}:8084"
+    volumes:
+      - ./src/php-app:/var/www/html:ro   # SCRIPT_FILENAME + estáticos PHP
+      - documentos:/var/dms/uploads:ro
+    depends_on:
+      - fastapi
+    networks:
+      - dms_backbone
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 128M
+
 # ══════════════════════════════════════════════════════════
 #  Volúmenes
 # ══════════════════════════════════════════════════════════
 volumes:
-  mongo_data:
+  mongodb_data:
+    name: mongodb_data
     driver: local
-    labels:
-      service: indexer
-      database: mongodb
+  indices_busqueda:
+    name: indices_busqueda
+    driver: local
+  documentos:
+    external: true
+    name: documentos
 
 # ══════════════════════════════════════════════════════════
 #  Redes
 #  indexer_internal — aislada: solo mongodb + fastapi
-#  dms_backbone     — externa compartida: fastapi se comunica
-#                     con dotnet y php por nombre de servicio
+#  dms_backbone     — externa compartida: nginx/fastapi ↔ dms_php/dms_dotnet
 # ══════════════════════════════════════════════════════════
 networks:
   indexer_internal:
     driver: bridge
   dms_backbone:
     external: true
+    name: dms_backbone

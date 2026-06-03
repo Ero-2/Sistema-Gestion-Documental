@@ -1,7 +1,7 @@
 import logging
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.openapi.utils import get_openapi
 from fastapi.security import APIKeyHeader
 from pymongo import TEXT
@@ -130,9 +130,10 @@ async def on_startup():
 
 
 @app.get("/", tags=["General"], include_in_schema=False)
-async def root():
+async def root(request: Request):
     from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/auth/login")
+    base = request.headers.get("x-forwarded-prefix", "").rstrip("/")
+    return RedirectResponse(url=f"{base}/auth/login")
 
 @app.get("/health", tags=["General"])
 async def health_check():

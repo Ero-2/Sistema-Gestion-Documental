@@ -51,7 +51,7 @@ public static class DependencyInjection
 
         services.AddHttpContextAccessor();
 
-        var fastapiUrl = configuration["PublicDms:WebhookUrl"] ?? "http://fastapi:8000";
+        var fastapiUrl = configuration["PublicDms:WebhookUrl"] ?? "http://dms_fastapi:8000";
         var fastapiKey  = configuration["PublicDms:ApiKey"] ?? "";
         services.AddHttpClient<IPublicDmsWebhookService, PublicDmsWebhookService>(client =>
         {
@@ -71,7 +71,7 @@ public static class DependencyInjection
                 client.DefaultRequestHeaders.Add("X-API-Key", fastapiKey);
         });
 
-        var phpUrl = configuration["PublicDms:PhpSyncUrl"] ?? "http://php";
+        var phpUrl = configuration["PublicDms:PhpSyncUrl"] ?? "http://dms_nginx";
         var apiKey = configuration["PublicDms:ApiKey"] ?? "";
         services.AddHttpClient<IPhpSyncService, PhpSyncService>(client =>
         {

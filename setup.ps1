@@ -1,18 +1,43 @@
-# ============================================================
+﻿# ============================================================
 #  DMS Setup -- Windows PowerShell
 #
-#  Instalacion completa:    .\setup.ps1
-#  Solo .NET + SQL Server:  .\setup.ps1 -Stack net
+#  Instalacion completa:    .\setup.ps1            (3 stacks)
+#  Solo .NET + SQL Server:  .\setup.ps1 -Stack dotnet
 #  Solo PHP + PostgreSQL:   .\setup.ps1 -Stack php
-#  Solo FastAPI + MongoDB:  .\setup.ps1 -Stack indexer
-#  Diagnostico del sistema: .\setup.ps1 -Diagnose
+#  Solo FastAPI + Mongo+Nginx: .\setup.ps1 -Stack fastapi
+#
+#  Subcomandos de diagnostico (no interactivos):
+#    .\setup.ps1 status     estado de contenedores
+#    .\setup.ps1 ports      puertos del sistema
+#    .\setup.ps1 logs       logs (todos / -Stack <s>)
+#    .\setup.ps1 validate   HTTP + BD + storage + busqueda
+#  Menu interactivo:        .\setup.ps1 -Diagnose
 # ============================================================
 
 param(
-    [ValidateSet("all","net","php","indexer")]
+    [Parameter(Position=0)]
+    [string]$Command = "all",
+    [ValidateSet("all","dotnet","php","fastapi","net","indexer")]
     [string]$Stack = "all",
     [switch]$Diagnose
 )
+
+# ── Normalizar comando/stack ──────────────────────────────────────────────────
+# Subcomandos posicionales: .\setup.ps1 status|ports|logs|validate
+$Subcommand = $null
+switch ($Command.ToLower()) {
+    "status"   { $Subcommand = "status" }
+    "ports"    { $Subcommand = "ports" }
+    "logs"     { $Subcommand = "logs" }
+    "validate" { $Subcommand = "validate" }
+    "all"      { }                                  # default: instalacion
+    default    { $Stack = $Command }                # trata el posicional como stack
+}
+# Alias legacy de nombres de stack
+switch ($Stack.ToLower()) {
+    "net"     { $Stack = "dotnet" }
+    "indexer" { $Stack = "fastapi" }
+}
 
 $ErrorActionPreference = "Stop"
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
@@ -23,13 +48,15 @@ function Write-Ok   { param($msg) Write-Host "  [OK] $msg" -ForegroundColor Gree
 function Write-Warn { param($msg) Write-Host "  [!]  $msg" -ForegroundColor Yellow }
 function Write-Err  { param($msg) Write-Host "  [X]  $msg" -ForegroundColor Red }
 function Write-Info { param($msg) Write-Host "       $msg" -ForegroundColor Gray }
-function Write-Sep  { param([char]$c='─',[int]$n=60) Write-Host ("  " + ($c * $n)) -ForegroundColor DarkGray }
+function Write-Sep  { param([string]$c='-',[int]$n=60) Write-Host ("  " + ($c * $n)) -ForegroundColor DarkGray }
 
 # ── Puertos del sistema ───────────────────────────────────────────────────────
-$PORT_MAP = [ordered]@{
-    80    = "Nginx → PHP (portal publico)"
-    8443  = "Nginx → FastAPI (busqueda HTTPS)"
-    8084  = "Nginx → .NET  (gestion interna)"
+# Hashtables normales (acceso por clave int). Orden de display en $PORT_ORDER.
+$PORT_ORDER = @(80, 8443, 8084, 5080, 8001, 1435, 5433, 27018)
+$PORT_MAP = @{
+    80    = "Nginx -> PHP (portal publico)"
+    8443  = "Nginx -> FastAPI (busqueda HTTPS)"
+    8084  = "Nginx -> .NET  (gestion interna)"
     5080  = ".NET directo (CalidadSYS)"
     8001  = "FastAPI directo (Swagger)"
     1435  = "SQL Server"
@@ -37,11 +64,51 @@ $PORT_MAP = [ordered]@{
     27018 = "MongoDB"
 }
 
+# ── Mapa puerto host -> variable de entorno (.env) para reasignacion ──────────
+$PORT_ENV = @{
+    80    = "NGINX_HTTP_PORT"
+    8443  = "NGINX_HTTPS_PORT"
+    8084  = "NGINX_DOTNET_PORT"
+    5080  = "DOTNET_PORT"
+    8001  = "FASTAPI_PORT"
+    1435  = "SQLSERVER_PORT"
+    5433  = "POSTGRES_HOST_PORT"
+    27018 = "MONGO_HOST_PORT"
+}
+# Puertos host efectivos (se actualizan si el usuario reasigna)
+$PortNow = @{}
+foreach ($k in $PORT_ORDER) { $PortNow[$k] = $k }
+
 # ── Contenedores del sistema ──────────────────────────────────────────────────
 $DMS_CONTAINERS = @(
     "dms_nginx","dms_dotnet","dms_sqlserver",
     "dms_postgres","dms_php","dms_fastapi","dms_mongodb"
 )
+
+# ── Upsert KEY=VALUE en un archivo .env ───────────────────────────────────────
+function Set-EnvVar {
+    param([string]$File, [string]$Key, [string]$Value)
+    $line = "$Key=$Value"
+    if (Test-Path $File) {
+        $content = Get-Content $File
+        if ($content -match "^$Key=") {
+            ($content -replace "^$Key=.*", $line) | Set-Content $File -Encoding UTF8
+        } else {
+            Add-Content $File -Value $line -Encoding UTF8
+        }
+    } else {
+        Set-Content $File -Value $line -Encoding UTF8
+    }
+}
+
+# ── Buscar el siguiente puerto libre a partir de uno dado ─────────────────────
+function Get-NextFreePort {
+    param([int]$Start)
+    for ($p = $Start; $p -lt $Start + 200; $p++) {
+        if ($null -eq (Get-PortOwner -Port $p)) { return $p }
+    }
+    return $Start
+}
 
 # ── Detectar proceso que ocupa un puerto ──────────────────────────────────────
 function Get-PortOwner {
@@ -49,12 +116,12 @@ function Get-PortOwner {
     $lines = netstat -ano 2>$null | Select-String "[\s:]$Port\s"
     foreach ($line in $lines) {
         if ($line -match "LISTENING|LISTEN") {
-            $parts = $line.Line.Trim() -split '\s+'
-            $pid   = $parts[-1]
+            $parts  = $line.Line.Trim() -split '\s+'
+            $procId = $parts[-1]
             try {
-                $proc = Get-Process -Id ([int]$pid) -ErrorAction Stop
-                return "$($proc.ProcessName) (PID $pid)"
-            } catch { return "PID $pid" }
+                $proc = Get-Process -Id ([int]$procId) -ErrorAction Stop
+                return "$($proc.ProcessName) (PID $procId)"
+            } catch { return "PID $procId" }
         }
     }
     return $null
@@ -62,14 +129,58 @@ function Get-PortOwner {
 
 function Test-PortFree { param([int]$Port); return ($null -eq (Get-PortOwner -Port $Port)) }
 
-# ── Detectar compose + env segun stack ───────────────────────────────────────
-function Get-StackFiles {
+# ── Cargar variables de .env al entorno del proceso (para diagnosticos) ───────
+function Import-DotEnv {
+    param([string]$File = ".env")
+    if (-not (Test-Path $File)) { return }
+    foreach ($line in Get-Content $File) {
+        if ($line -match '^\s*#' -or $line -notmatch '=') { continue }
+        $k, $v = $line -split '=', 2
+        $k = $k.Trim(); $v = $v.Trim()
+        if ($k) { Set-Item -Path "Env:$k" -Value $v -ErrorAction SilentlyContinue }
+    }
+}
+
+# ── Tabla de stacks (3 docker-compose independientes) ────────────────────────
+# Todos comparten el mismo .env raiz, la red 'dms_backbone' y el volumen 'documentos'.
+$STACK_TABLE = [ordered]@{
+    dotnet  = @{ Project = "dms-dotnet";  Compose = "docker-compose.dotnet.yml"  }
+    php     = @{ Project = "dms-php";      Compose = "docker-compose.php.yml"     }
+    fastapi = @{ Project = "dms-fastapi";  Compose = "docker-compose.fastapi.yml" }
+}
+$SHARED_ENV = ".env"
+
+# Devuelve la lista de claves de stack a operar segun seleccion ("all" = los 3).
+function Get-StackList {
     param([string]$s)
-    switch ($s) {
-        "net"     { return @{ Compose = "compose-net.yml";     Env = ".env.net"     } }
-        "php"     { return @{ Compose = "compose-php.yml";     Env = ".env.php"     } }
-        "indexer" { return @{ Compose = "compose-indexer.yml"; Env = ".env.indexer" } }
-        default   { return @{ Compose = "compose-all.yml";     Env = ".env"         } }
+    if ($s -eq "all" -or [string]::IsNullOrEmpty($s)) { return @($STACK_TABLE.Keys) }
+    return @($s)
+}
+
+# Asegura red compartida + volumen externo de documentos (idempotente).
+function Initialize-SharedInfra {
+    $null = docker network inspect dms_backbone 2>&1
+    if ($LASTEXITCODE -ne 0) { docker network create dms_backbone | Out-Null; Write-Ok "Red dms_backbone creada" }
+    else { Write-Info "Red dms_backbone ya existe" }
+    $null = docker volume inspect documentos 2>&1
+    if ($LASTEXITCODE -ne 0) { docker volume create documentos | Out-Null; Write-Ok "Volumen 'documentos' creado" }
+    else { Write-Info "Volumen 'documentos' ya existe" }
+}
+
+# Levanta un stack (build + up -d) con su nombre de proyecto.
+function Invoke-StackUp {
+    param([string]$composeCmd, [string]$stackKey)
+    $s = $STACK_TABLE[$stackKey]
+    Invoke-Expression "$composeCmd -p $($s.Project) --env-file `"$SHARED_ENV`" -f `"$($s.Compose)`" up -d --build" | Out-String
+}
+
+# Ejecuta un comando compose (down/restart/ps/logs...) sobre uno o todos los stacks.
+function Invoke-StackCompose {
+    param([string]$composeCmd, [string]$stackSel, [string]$action)
+    foreach ($k in (Get-StackList $stackSel)) {
+        $s = $STACK_TABLE[$k]
+        Write-Info "[$($s.Project)] $action"
+        Invoke-Expression "$composeCmd -p $($s.Project) --env-file `"$SHARED_ENV`" -f `"$($s.Compose)`" $action"
     }
 }
 
@@ -127,38 +238,38 @@ function Show-PortStatus {
     Write-Sep
     Write-Host ("  {0,-6} {1,-38} {2}" -f "PUERTO","SERVICIO","ESTADO") -ForegroundColor DarkGray
     Write-Sep
-    foreach ($kv in $PORT_MAP.GetEnumerator()) {
-        $owner = Get-PortOwner -Port $kv.Key
+    foreach ($port in $PORT_ORDER) {
+        $owner = Get-PortOwner -Port $port
         if ($null -eq $owner) {
-            Write-Host ("  {0,-6} {1,-38} {2}" -f $kv.Key, $kv.Value, "libre") -ForegroundColor DarkGray
+            Write-Host ("  {0,-6} {1,-38} {2}" -f $port, $PORT_MAP[$port], "libre") -ForegroundColor DarkGray
         } else {
             $color = if ($owner -match "docker|vpnkit|com.docker") { "Green" } else { "Yellow" }
-            Write-Host ("  {0,-6} {1,-38} {2}" -f $kv.Key, $kv.Value, "OCUPADO por $owner") -ForegroundColor $color
+            Write-Host ("  {0,-6} {1,-38} {2}" -f $port, $PORT_MAP[$port], "OCUPADO por $owner") -ForegroundColor $color
         }
     }
     Write-Host ""
 }
 
 function Show-Logs {
-    param([string]$composeCmd, [string]$composeFile, [string]$envFile)
+    param([int]$Tail = 60)
     Write-Host ""
-    Write-Host "  SERVICIO para ver logs:" -ForegroundColor Cyan
-    Write-Host "  [1] nginx   [2] dotnet   [3] sqlserver"
-    Write-Host "  [4] php     [5] fastapi  [6] postgres   [7] mongodb"
-    Write-Host "  [0] Todos"
-    $svc = Read-Host "  Opcion"
-    $map = @{"1"="nginx";"2"="dotnet";"3"="sqlserver";"4"="php";"5"="fastapi";"6"="postgres";"7"="mongodb";"0"=""}
-    if ($map.ContainsKey($svc)) {
-        $args2 = if ($map[$svc]) { "logs --tail=80 $($map[$svc])" } else { "logs --tail=40" }
-        Invoke-Expression "$composeCmd --env-file `"$envFile`" -f `"$composeFile`" $args2"
+    Write-Host "  LOGS (ultimas $Tail lineas por contenedor)" -ForegroundColor Cyan
+    Write-Sep
+    foreach ($c in $DMS_CONTAINERS) {
+        $exists = docker ps -a --filter "name=^$c$" --format "{{.Names}}" 2>$null
+        if (-not $exists) { Write-Warn "$c  —  no existe"; continue }
+        Write-Host ""
+        Write-Host "  ===== $c =====" -ForegroundColor DarkCyan
+        docker logs --tail $Tail $c 2>&1 | ForEach-Object { Write-Host "  $_" }
     }
+    Write-Host ""
 }
 
 function Restart-Services {
-    param([string]$composeCmd, [string]$composeFile, [string]$envFile)
+    param([string]$composeCmd, [string]$stackSel)
     Write-Host ""
-    Write-Warn "Reiniciando todos los servicios del stack $Stack..."
-    Invoke-Expression "$composeCmd --env-file `"$envFile`" -f `"$composeFile`" restart"
+    Write-Warn "Reiniciando servicios [stack: $stackSel]..."
+    Invoke-StackCompose -composeCmd $composeCmd -stackSel $stackSel -action "restart"
     Write-Ok "Reinicio completado."
 }
 
@@ -173,15 +284,20 @@ function Test-HttpConnectivity {
         @{ Url = "http://localhost:8001/health"; Label = "FastAPI health         :8001" }
         @{ Url = "http://localhost:5080";     Label = ".NET directo             :5080"  }
     )
+    # Ignorar certificados self-signed + TLS 1.2 (compatible 5.1 y 7).
+    try {
+        [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    } catch {}
     foreach ($ep in $endpoints) {
         try {
-            $resp = Invoke-WebRequest -Uri $ep.Url -UseBasicParsing -TimeoutSec 5 `
-                    -SkipCertificateCheck -ErrorAction Stop 2>$null
-            Write-Ok "$($ep.Label)  →  $($resp.StatusCode)"
+            $resp = Invoke-WebRequest -Uri $ep.Url -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            Write-Ok "$($ep.Label)  ->  $($resp.StatusCode)"
         } catch {
-            $code = $_.Exception.Response?.StatusCode
-            if ($code) { Write-Warn "$($ep.Label)  →  HTTP $([int]$code)" }
-            else        { Write-Err  "$($ep.Label)  →  Sin respuesta" }
+            $code = $null
+            try { $code = $_.Exception.Response.StatusCode } catch {}
+            if ($code) { Write-Warn "$($ep.Label)  ->  HTTP $([int]$code)" }
+            else       { Write-Err  "$($ep.Label)  ->  Sin respuesta" }
         }
     }
     Write-Host ""
@@ -224,20 +340,19 @@ function Test-Storage {
     Write-Host ""
     Write-Host "  VALIDACION DE ALMACENAMIENTO DOCUMENTAL" -ForegroundColor Cyan
     Write-Sep
-    $paths = @(".\data\uploads", "/app/uploads")
-    foreach ($p in $paths) {
-        if (Test-Path $p) {
-            $files = (Get-ChildItem $p -Recurse -File -ErrorAction SilentlyContinue).Count
-            Write-Ok "${p}  →  $files archivos"
-        } else {
-            Write-Warn "${p}  →  no existe localmente"
-        }
+    # Volumen externo compartido
+    $null = docker volume inspect documentos 2>&1
+    if ($LASTEXITCODE -eq 0) { Write-Ok "Volumen 'documentos' existe (compartido por los 3 stacks)" }
+    else { Write-Warn "Volumen 'documentos' NO existe (crear con: docker volume create documentos)" }
+
+    # Conteo de archivos por contenedor (cada uno monta 'documentos')
+    foreach ($pair in @(@("dms_dotnet","/app/uploads"), @("dms_php","/var/dms/uploads"), @("dms_fastapi","/app/uploads"))) {
+        try {
+            $r = docker exec $pair[0] sh -c "find $($pair[1]) -type f 2>/dev/null | wc -l" 2>$null
+            if ($LASTEXITCODE -eq 0) { Write-Ok "$($pair[0]) $($pair[1]) →  $($r.Trim()) archivos" }
+            else { Write-Warn "$($pair[0]) no accesible" }
+        } catch { Write-Warn "$($pair[0]) no accesible" }
     }
-    # Verificar dentro del contenedor dotnet
-    try {
-        $r = docker exec dms_dotnet sh -c "find /app/uploads -type f | wc -l" 2>$null
-        if ($LASTEXITCODE -eq 0) { Write-Ok ".NET /app/uploads →  $($r.Trim()) archivos en contenedor" }
-    } catch { Write-Warn "Contenedor dotnet no accesible" }
     Write-Host ""
 }
 
@@ -263,11 +378,11 @@ function Test-SearchEngine {
 }
 
 function Show-DiagnosticMenu {
-    param([string]$composeCmd, [string]$composeFile, [string]$envFile)
+    param([string]$composeCmd, [string]$stackSel)
     do {
         Write-Host ""
         Write-Sep '═'
-        Write-Host "  DIAGNOSTICO DEL SISTEMA  [stack: $Stack]" -ForegroundColor Cyan
+        Write-Host "  DIAGNOSTICO DEL SISTEMA  [stack: $stackSel]" -ForegroundColor Cyan
         Write-Sep '═'
         Write-Host "  [1]  Estado de contenedores"       -ForegroundColor White
         Write-Host "  [2]  Puertos utilizados"            -ForegroundColor White
@@ -283,8 +398,8 @@ function Show-DiagnosticMenu {
         switch ($opt) {
             "1" { Show-ContainerStatus }
             "2" { Show-PortStatus }
-            "3" { Show-Logs -composeCmd $composeCmd -composeFile $composeFile -envFile $envFile }
-            "4" { Restart-Services -composeCmd $composeCmd -composeFile $composeFile -envFile $envFile }
+            "3" { Show-Logs }
+            "4" { Restart-Services -composeCmd $composeCmd -stackSel $stackSel }
             "5" { Test-HttpConnectivity }
             "6" { Test-Databases }
             "7" { Test-Storage }
@@ -300,15 +415,31 @@ function Show-DiagnosticMenu {
 # ══════════════════════════════════════════════════════════════════════════════
 Show-Banner
 
-$files       = Get-StackFiles -s $Stack
-$composeFile = $files.Compose
-$envFile     = $files.Env
+$envFile = $SHARED_ENV
 
-# ── Modo diagnostico puro ─────────────────────────────────────────────────────
+# ── Subcomandos de diagnostico (no interactivos) ──────────────────────────────
+if ($Subcommand) {
+    Import-DotEnv -File $SHARED_ENV
+    switch ($Subcommand) {
+        "status"   { Show-ContainerStatus }
+        "ports"    { Show-PortStatus }
+        "logs"     { Show-Logs }
+        "validate" {
+            Test-HttpConnectivity
+            Test-Databases
+            Test-Storage
+            Test-SearchEngine
+        }
+    }
+    exit 0
+}
+
+# ── Modo diagnostico puro (menu interactivo) ──────────────────────────────────
 if ($Diagnose) {
+    Import-DotEnv -File $SHARED_ENV
     $composeCmd = Get-ComposeCmd
     if (-not $composeCmd) { Write-Err "Docker Compose no encontrado."; exit 1 }
-    Show-DiagnosticMenu -composeCmd $composeCmd -composeFile $composeFile -envFile $envFile
+    Show-DiagnosticMenu -composeCmd $composeCmd -stackSel $Stack
     exit 0
 }
 
@@ -363,12 +494,12 @@ if ($systemExists) {
     switch ($choice) {
         "S" { Write-Info "Saliendo."; exit 0 }
         "D" {
-            Show-DiagnosticMenu -composeCmd $composeCmd -composeFile $composeFile -envFile $envFile
+            Show-DiagnosticMenu -composeCmd $composeCmd -stackSel $Stack
             exit 0
         }
         "R" {
             Write-Step "Reiniciando servicios existentes..."
-            Invoke-Expression "$composeCmd --env-file `"$envFile`" -f `"$composeFile`" restart" 2>&1 | Out-Null
+            Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "restart" 2>&1 | Out-Null
             Write-Ok "Servicios reiniciados."
             Write-Host ""
             # Mostrar dashboard y salir
@@ -376,15 +507,16 @@ if ($systemExists) {
         }
         "L" {
             Write-Host ""
-            Write-Warn "ADVERTENCIA: Se eliminaran todos los volumenes de datos."
-            Write-Warn "SQL Server, PostgreSQL y MongoDB perderan todos sus datos."
+            Write-Warn "ADVERTENCIA: Se eliminaran los volumenes de datos de los stacks."
+            Write-Warn "SQL Server, PostgreSQL y MongoDB perderan sus datos."
+            Write-Warn "El volumen externo 'documentos' NO se elimina (compartido)."
             Write-Host ""
             $confirm = Read-Host "  Escribe CONFIRMAR para continuar"
             if ($confirm -ne "CONFIRMAR") {
                 Write-Info "Cancelado."; exit 0
             }
             Write-Step "Eliminando contenedores y volumenes..."
-            Invoke-Expression "$composeCmd --env-file `"$envFile`" -f `"$composeFile`" down -v" 2>&1 | Out-Null
+            Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "down -v" 2>&1 | Out-Null
             Write-Ok "Limpieza completa. Procediendo con instalacion limpia..."
             $systemExists = $false
             $skip = $false
@@ -400,9 +532,9 @@ Write-Host ""
 
 # Puertos criticos segun el stack seleccionado
 $portsToCheck = switch ($Stack) {
-    "net"     { @(5080, 1435) }
-    "php"     { @(80, 8443, 8084, 5433) }
-    "indexer" { @(8001, 27018) }
+    "dotnet"  { @(5080, 1435) }
+    "php"     { @(5433) }
+    "fastapi" { @(80, 8443, 8084, 8001, 27018) }
     default   { @(80, 8443, 8084, 5080, 8001, 1435, 5433, 27018) }
 }
 
@@ -423,12 +555,14 @@ foreach ($port in $portsToCheck) {
     }
 }
 
+$PortOverride = @{}
 if ($conflicts.Count -gt 0) {
     Write-Host ""
     Write-Warn "$($conflicts.Count) conflicto(s) de puerto detectado(s)."
     Write-Host ""
     Write-Host "  Opciones:" -ForegroundColor Cyan
-    Write-Host "  [C]  Continuar de todas formas (los puertos del conflicto no funcionaran)" -ForegroundColor White
+    Write-Host "  [R]  Reasignar los puertos en conflicto (cambia el puerto host)" -ForegroundColor White
+    Write-Host "  [C]  Continuar de todas formas (los puertos en conflicto no funcionaran)" -ForegroundColor White
     Write-Host "  [S]  Salir y resolver los conflictos manualmente" -ForegroundColor White
     Write-Host ""
     Write-Info "Para liberar un puerto en Windows:"
@@ -437,8 +571,31 @@ if ($conflicts.Count -gt 0) {
     Write-Host ""
 
     $pChoice = ""
-    do { $pChoice = (Read-Host "  Opcion [C/S]").ToUpper() } while ($pChoice -notin @("C","S"))
+    do { $pChoice = (Read-Host "  Opcion [R/C/S]").ToUpper() } while ($pChoice -notin @("R","C","S"))
     if ($pChoice -eq "S") { Write-Info "Saliendo. Libera los puertos e intenta de nuevo."; exit 0 }
+
+    if ($pChoice -eq "R") {
+        Write-Host ""
+        foreach ($c in $conflicts) {
+            $port = [int]$c.Port
+            $envVar = $PORT_ENV[$port]
+            if (-not $envVar) { Write-Warn "Puerto $port no es reasignable (interno)."; continue }
+            $suggest = Get-NextFreePort -Start ($port + 1)
+            Write-Host "  Puerto $port ($($PORT_MAP[$port]))" -ForegroundColor Cyan
+            $inp = Read-Host "    Nuevo puerto [Enter = $suggest]"
+            $newPort = if ([string]::IsNullOrWhiteSpace($inp)) { $suggest } else { [int]$inp }
+            # Validar que el nuevo puerto este libre
+            if ($null -ne (Get-PortOwner -Port $newPort)) {
+                Write-Warn "    Puerto $newPort tambien ocupado. Usando $suggest."
+                $newPort = $suggest
+            }
+            $PortOverride[$port] = $newPort
+            $PortNow[$port]      = $newPort
+            Write-Ok "    $port → $newPort  ($envVar)"
+        }
+        Write-Host ""
+        Write-Info "Los nuevos puertos se guardaran en .env antes de levantar."
+    }
 }
 
 # ── Seleccion de modo ─────────────────────────────────────────────────────────
@@ -462,23 +619,9 @@ $seedModeLabel = if ($modeInput -eq "1") { "Sandbox (10,000 docs)" } else { "Dev
 Write-Host ""
 Write-Ok "Modo: $seedModeLabel"
 
-# ── Red compartida (stacks separados) ─────────────────────────────────────────
-if ($Stack -ne "all") {
-    Write-Step "Verificando red compartida dms_backbone..."
-    $netExists = docker network inspect dms_backbone 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        docker network create dms_backbone | Out-Null
-        Write-Ok "Red dms_backbone creada"
-    } else {
-        Write-Info "Red dms_backbone ya existe"
-    }
-    if (-not (Test-Path ".\data\uploads")) {
-        New-Item -ItemType Directory -Path ".\data\uploads" -Force | Out-Null
-        Write-Ok "Directorio .\data\uploads creado"
-    } else {
-        Write-Info ".\data\uploads ya existe"
-    }
-}
+# ── Infraestructura compartida: red dms_backbone + volumen documentos ─────────
+Write-Step "Verificando infraestructura compartida..."
+Initialize-SharedInfra
 
 # ── Generar archivos .env ─────────────────────────────────────────────────────
 $generarEnv = $true
@@ -538,108 +681,82 @@ if ($generarEnv) {
     function Write-EnvFile { param([string]$Path,[string]$Content)
         Set-Content -Path $Path -Value $Content -Encoding UTF8; Write-Ok "$Path generado" }
 
+    # .env raiz unico — consumido por los 3 docker-compose (--env-file .env).
+    # Las URLs cross-stack van inline en los compose (dms_php/dms_dotnet/dms_fastapi/dms_nginx).
     $envAll = @"
 # Generado por setup.ps1 -- $ts
 # NO commitear este archivo.
 
+# -- SQL Server
 MSSQL_SA_PASSWORD=$MASTER_PASS
 MSSQL_DB=QualityDMS
-POSTGRES_DB=PublicDMS
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=$MASTER_PASS
-MONGO_USER=mongoadmin
-MONGO_PASSWORD=$MASTER_PASS
-FASTAPI_API_KEY=$API_KEY
-FASTAPI_URL=http://fastapi:8000
-JWT_SECRET=$JWT_SECRET
-DMS_SEED_MODE=$seedMode
-"@
-    $envNet = @"
-# Stack 1 — .NET + SQL Server — $ts
-MSSQL_SA_PASSWORD=$MASTER_PASS
-MSSQL_DB=QualityDMS
-FASTAPI_API_KEY=$API_KEY
-JWT_SECRET=$JWT_SECRET
-PHP_WEBHOOK_URL=http://php
-FASTAPI_WEBHOOK_URL=http://fastapi:8000
-DMS_SEED_MODE=$seedMode
-"@
-    $envPhp = @"
-# Stack 2 — PHP + PostgreSQL + Nginx — $ts
-POSTGRES_DB=PublicDMS
-POSTGRES_USER=postgres
-POSTGRES_PASSWORD=$MASTER_PASS
-FASTAPI_API_KEY=$API_KEY
-FASTAPI_URL=http://fastapi:8000
-DOTNET_API_URL=http://dotnet:8080
-"@
-    $envIndexer = @"
-# Stack 3 — FastAPI + MongoDB — $ts
-MONGO_USER=mongoadmin
-MONGO_PASSWORD=$MASTER_PASS
-FASTAPI_API_KEY=$API_KEY
-JWT_SECRET=$JWT_SECRET
-POSTGRES_HOST=postgres
+
+# -- PostgreSQL (cross-stack: fastapi/documents_sync apunta a dms_postgres)
+POSTGRES_HOST=dms_postgres
 POSTGRES_PORT=5432
 POSTGRES_DB=PublicDMS
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=$MASTER_PASS
-DOTNET_API_URL=http://dotnet:8080
+
+# -- MongoDB
+MONGO_USER=mongoadmin
+MONGO_PASSWORD=$MASTER_PASS
+
+# -- Secretos compartidos
+FASTAPI_API_KEY=$API_KEY
+JWT_SECRET=$JWT_SECRET
+
+# -- URLs cross-stack (container names sobre dms_backbone)
+FASTAPI_URL=http://dms_fastapi:8000
+
+# -- Seed: sandbox | dev | none
+DMS_SEED_MODE=$seedMode
 "@
 
-    switch ($Stack) {
-        "net"     { Write-EnvFile ".env.net"     $envNet }
-        "php"     { Write-EnvFile ".env.php"     $envPhp }
-        "indexer" { Write-EnvFile ".env.indexer" $envIndexer }
-        default   {
-            Write-EnvFile ".env"         $envAll
-            Write-EnvFile ".env.net"     $envNet
-            Write-EnvFile ".env.php"     $envPhp
-            Write-EnvFile ".env.indexer" $envIndexer
-        }
+    Write-EnvFile $SHARED_ENV $envAll
+}
+
+# ── Persistir puertos reasignados (sobre el .env ya generado) ─────────────────
+if ($PortOverride.Count -gt 0) {
+    Write-Step "Aplicando puertos reasignados a .env..."
+    foreach ($p in $PortOverride.Keys) {
+        Set-EnvVar -File $SHARED_ENV -Key $PORT_ENV[$p] -Value ([string]$PortOverride[$p])
+        Write-Ok "$($PORT_ENV[$p])=$($PortOverride[$p])  (era $p)"
     }
 }
 
-# ── Levantar contenedores ─────────────────────────────────────────────────────
+# ── Levantar contenedores (1 o varios stacks independientes) ──────────────────
 Write-Step "Construyendo e iniciando contenedores..."
 Write-Host ""
-Write-Info "Primera ejecucion puede tomar 5-15 minutos (pull de imagenes + healthchecks)."
-Write-Host ""
-Write-Info "Comando: $composeCmd --env-file $envFile -f $composeFile up -d --build"
+Write-Info "Primera ejecucion puede tomar 5-15 minutos (pull de imagenes + builds)."
 Write-Host ""
 
-$workDir = (Get-Location).Path
-$job = Start-Job -ScriptBlock {
-    param($cc,$ef,$cf,$wd)
-    Set-Location $wd
-    Invoke-Expression "$cc --env-file `"$ef`" -f `"$cf`" up -d --build" | Out-String
-    $LASTEXITCODE
-} -ArgumentList $composeCmd,$envFile,$composeFile,$workDir
+# Orden: dotnet (SQL) y php (Postgres) primero; fastapi+nginx al final
+# (nginx hace proxy a dms_dotnet/dms_php, que deben existir en la red).
+$bootOrder = @("dotnet","php","fastapi") | Where-Object { $_ -in (Get-StackList $Stack) }
 
-$elapsed = 0; $si = 0; $sp = @('|','/','-','\')
-Write-Host "  [~] Iniciando... (0s)  " -NoNewline -ForegroundColor Yellow
-while ($job.State -eq 'Running') {
-    Start-Sleep 1; $elapsed++
-    Write-Host ("`r  $($sp[$si % 4])  Iniciando... ($elapsed`s)  ") -NoNewline -ForegroundColor Yellow
-    $si++
+$failed = $false
+foreach ($k in $bootOrder) {
+    $s = $STACK_TABLE[$k]
+    Write-Host ""
+    Write-Info "[$($s.Project)]  $composeCmd -p $($s.Project) -f $($s.Compose) up -d --build"
+    $out = Invoke-StackUp -composeCmd $composeCmd -stackKey $k
+    if ($LASTEXITCODE -ne 0) {
+        Write-Err "[$($s.Project)] fallo (exit $LASTEXITCODE)"
+        if ($out) { $out -split "`n" | Where-Object { $_.Trim() } | ForEach-Object { Write-Host "  $_" } }
+        $failed = $true
+        break
+    }
+    Write-Ok "[$($s.Project)] iniciado"
 }
 
-$res      = Receive-Job $job -Wait -AutoRemoveJob
-$arr      = @($res)
-$exitCode = if ($arr.Count -gt 0 -and $arr[-1] -is [int]) { [int]$arr[-1] } else { 0 }
-$dockerOut = if ($arr.Count -gt 1) { $arr[0].ToString().Trim() } else { "" }
-Write-Host ""
-
-if ($dockerOut) { $dockerOut -split "`n" | Where-Object { $_.Trim() } | ForEach-Object { Write-Host "  $_" }; Write-Host "" }
-
-if ($exitCode -ne 0) {
-    Write-Err "Error al iniciar contenedores."
+if ($failed) {
     Write-Host ""
     Write-Host "  Causas comunes:" -ForegroundColor Yellow
-    Write-Info "  - Puerto ocupado: revisa con  .\setup.ps1 -Diagnose  opcion [2]"
-    Write-Info "  - Imagen corrupta: docker system prune -f  (borra cache)"
+    Write-Info "  - Puerto ocupado: .\setup.ps1 ports"
+    Write-Info "  - Imagen corrupta: docker system prune -f"
     Write-Info "  - Sin espacio:    docker system df"
-    Write-Info "  - Logs:           $composeCmd -f $composeFile logs"
+    Write-Info "  - Logs:           .\setup.ps1 logs"
     exit 1
 }
 Write-Ok "Contenedores iniciados"
@@ -668,7 +785,7 @@ function Wait-Container {
 Write-Step "Esperando servicios..."
 Write-Host ""
 switch ($Stack) {
-    "net" {
+    "dotnet" {
         Write-Info "SQL Server puede tardar hasta 90s en primer arranque."
         $null = Wait-Container "SQL Server" "dms_sqlserver" 120 $true
         $null = Wait-Container ".NET Core"  "dms_dotnet"    90  $false
@@ -676,11 +793,11 @@ switch ($Stack) {
     "php" {
         $null = Wait-Container "PostgreSQL" "dms_postgres" 60 $true
         $null = Wait-Container "PHP-FPM"    "dms_php"      60 $false
-        $null = Wait-Container "Nginx"      "dms_nginx"    30 $false
     }
-    "indexer" {
+    "fastapi" {
         $null = Wait-Container "MongoDB"  "dms_mongodb" 60 $true
         $null = Wait-Container "FastAPI"  "dms_fastapi" 60 $false
+        $null = Wait-Container "Nginx"    "dms_nginx"   30 $false
     }
     default {
         Write-Info "SQL Server puede tardar hasta 90s en primer arranque."
@@ -703,39 +820,32 @@ Write-Host "  INSTALACION COMPLETA  [stack: $Stack]" -ForegroundColor White
 Write-Sep '═'
 Write-Host ""
 
-Write-Host "  PORTALES" -ForegroundColor Cyan
-switch ($Stack) {
-    "net" {
-        Write-Host "  -> .NET Gestion Documental     http://localhost:8084"      -ForegroundColor White
-        Write-Host "  -> .NET Acceso directo         http://localhost:5080"      -ForegroundColor DarkGray
-    }
-    "php" {
-        Write-Host "  -> Portal Publico  (PHP)       http://localhost"           -ForegroundColor White
-        Write-Host "  -> Motor Busqueda  (FastAPI)   https://localhost:8443"     -ForegroundColor White
-        Write-Host "  -> Gestion interna (.NET)      http://localhost:8084"      -ForegroundColor White
-    }
-    "indexer" {
-        Write-Host "  -> FastAPI Swagger              http://localhost:8001/docs" -ForegroundColor White
-        Write-Host "  -> Admin Viewer                 http://localhost:8001/admin/viewer" -ForegroundColor White
-    }
-    default {
-        Write-Host "  -> Portal Publico  (PHP)       http://localhost"            -ForegroundColor White
-        Write-Host "  -> Gestion interna (.NET)      http://localhost:8084"       -ForegroundColor White
-        Write-Host "  -> Motor Busqueda  (FastAPI)   https://localhost:8443"      -ForegroundColor White
-        Write-Host "  -> FastAPI Swagger             http://localhost:8001/docs"  -ForegroundColor DarkGray
-    }
-}
+# Puertos host efectivos (reflejan reasignaciones)
+$hp    = $PortNow[80]
+$root  = if ($hp -eq 80) { "http://localhost" } else { "http://localhost:$hp" }
+$pHttps = $PortNow[8443]; $pDnet = $PortNow[8084]; $pFa = $PortNow[8001]; $pNet5080 = $PortNow[5080]
+
+Write-Host "  PORTALES  (routing por path via Nginx)" -ForegroundColor Cyan
+Write-Host "  -> Portal Publico  (PHP)       $root/php/"      -ForegroundColor White
+Write-Host "  -> Gestion interna (.NET)      $root/dotnet/"   -ForegroundColor White
+Write-Host "  -> Motor Busqueda  (FastAPI)   $root/fastapi/"  -ForegroundColor White
+Write-Host ""
+Write-Host "  ACCESO DIRECTO (debug)" -ForegroundColor DarkGray
+Write-Host "  -> .NET directo                http://localhost:$pNet5080"   -ForegroundColor DarkGray
+Write-Host "  -> .NET via Nginx              http://localhost:$pDnet"      -ForegroundColor DarkGray
+Write-Host "  -> FastAPI Swagger             http://localhost:$pFa/docs"   -ForegroundColor DarkGray
+Write-Host "  -> FastAPI HTTPS               https://localhost:$pHttps"    -ForegroundColor DarkGray
 
 Write-Host ""
 Write-Host "  BASES DE DATOS" -ForegroundColor Cyan
 switch ($Stack) {
-    "net"     { Write-Host "  -> SQL Server    localhost:1435"  -ForegroundColor DarkGray }
-    "php"     { Write-Host "  -> PostgreSQL    localhost:5433"  -ForegroundColor DarkGray }
-    "indexer" { Write-Host "  -> MongoDB       localhost:27018" -ForegroundColor DarkGray }
+    "dotnet"  { Write-Host "  -> SQL Server    localhost:$($PortNow[1435])"  -ForegroundColor DarkGray }
+    "php"     { Write-Host "  -> PostgreSQL    localhost:$($PortNow[5433])"  -ForegroundColor DarkGray }
+    "fastapi" { Write-Host "  -> MongoDB       localhost:$($PortNow[27018])" -ForegroundColor DarkGray }
     default   {
-        Write-Host "  -> SQL Server    localhost:1435"  -ForegroundColor DarkGray
-        Write-Host "  -> PostgreSQL    localhost:5433"  -ForegroundColor DarkGray
-        Write-Host "  -> MongoDB       localhost:27018" -ForegroundColor DarkGray
+        Write-Host "  -> SQL Server    localhost:$($PortNow[1435])"  -ForegroundColor DarkGray
+        Write-Host "  -> PostgreSQL    localhost:$($PortNow[5433])"  -ForegroundColor DarkGray
+        Write-Host "  -> MongoDB       localhost:$($PortNow[27018])" -ForegroundColor DarkGray
     }
 }
 
@@ -771,10 +881,12 @@ Write-Host ""
 Write-Sep '─'
 Write-Host "  COMANDOS UTILES" -ForegroundColor Cyan
 Write-Sep '─'
-Write-Host "  Estado:      $composeCmd -f $composeFile ps"            -ForegroundColor DarkGray
-Write-Host "  Logs:        $composeCmd -f $composeFile logs -f"       -ForegroundColor DarkGray
-Write-Host "  Detener:     $composeCmd -f $composeFile down"          -ForegroundColor DarkGray
-Write-Host "  Diagnostico: .\setup.ps1 -Diagnose [-Stack $Stack]"     -ForegroundColor DarkGray
+Write-Host "  Estado:      .\setup.ps1 status"                        -ForegroundColor DarkGray
+Write-Host "  Puertos:     .\setup.ps1 ports"                         -ForegroundColor DarkGray
+Write-Host "  Logs:        .\setup.ps1 logs"                          -ForegroundColor DarkGray
+Write-Host "  Validar:     .\setup.ps1 validate"                      -ForegroundColor DarkGray
+Write-Host "  Detener:     docker compose -p dms-fastapi -f docker-compose.fastapi.yml down" -ForegroundColor DarkGray
+Write-Host "  Diagnostico: .\setup.ps1 -Diagnose"                     -ForegroundColor DarkGray
 Write-Host ""
 Write-Sep '═'
 Write-Host ""

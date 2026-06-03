@@ -1,7 +1,7 @@
 <?php
 session_start();
 if (!isset($_SESSION['user_id'])) {
-    header('Location: /login.php');
+    header('Location: ' . DMS_BASE . '/login.php');
     exit;
 }
 $userName = htmlspecialchars($_SESSION['user_name'] ?? 'Usuario');
@@ -263,7 +263,7 @@ a { color: inherit; text-decoration: none; }
   </div>
   <div class="session">
     <span class="who"><b><?= $userName ?></b></span>
-    <a href="/api/auth.php?action=logout" class="btn-out">salir</a>
+    <a href="<?= DMS_BASE ?>/api/auth.php?action=logout" class="btn-out">salir</a>
   </div>
 </header>
 

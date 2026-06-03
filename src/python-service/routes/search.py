@@ -4,7 +4,7 @@ import jwt
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Query, Header, HTTPException
+from fastapi import APIRouter, Query, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse
 
 from database import collection
@@ -126,8 +126,10 @@ async def list_documents(
 
 
 @router.get("/search", response_class=HTMLResponse)
-async def search_page():
-    return _PAGE
+async def search_page(request: Request):
+    # Prefijo público cuando se sirve detrás de Nginx por path (/fastapi).
+    base = request.headers.get("x-forwarded-prefix", "").rstrip("/")
+    return _PAGE.replace("__BASE__", base)
 
 
 _PAGE = """<!DOCTYPE html>
@@ -436,8 +438,9 @@ body {
 </main>
 
 <script>
+const BASE = '__BASE__';
 const token = localStorage.getItem('access_token');
-if (!token) location.href = '/auth/login';
+if (!token) location.href = BASE + '/auth/login';
 const uname = localStorage.getItem('user_name') || 'sesión';
 document.getElementById('who').innerHTML = '<b>' + uname.toLowerCase().replace(/\\s+/g,'.') + '</b>@qualitydms';
 
@@ -481,7 +484,7 @@ async function fetchDocs(resetPage) {
   showState('consultando índice <span class="cursor"></span>');
   document.getElementById('pager').innerHTML = '';
   try {
-    let url = '/search/documents?limit=' + PAGE + '&offset=' + offset + '&status=' + currentStatus;
+    let url = BASE + '/search/documents?limit=' + PAGE + '&offset=' + offset + '&status=' + currentStatus;
     if (q.length >= 2) url += '&q=' + encodeURIComponent(q);
     const res = await fetch(url, { headers: { 'Authorization': 'Bearer ' + token } });
     if (res.status === 401) { logout(); return; }
@@ -658,7 +661,7 @@ function buildMetaPanel(d, i, file, isSim) {
       const isSeedV = vFile.startsWith('seed/');
       const vName = v.file_name || '';
       const vLink = vFile && !isSeedV && vName
-        ? '<a href="/indexer/viewer/'+encodeURIComponent(vName)+'" target="_blank" style="font-size:11px;color:var(--accent);font-family:var(--mono)">ver</a>'
+        ? '<a href="'+BASE+'/indexer/viewer/'+encodeURIComponent(vName)+'" target="_blank" style="font-size:11px;color:var(--accent);font-family:var(--mono)">ver</a>'
         : '';
       return kv('v' + (v.version||'?') + ' — obsoleta ' + dt, vLink || '(sin archivo)');
     }).join('');
@@ -704,7 +707,7 @@ function openFile(i) {
 }
 
 function dlFile(i) {
-  window.location.href = '/indexer/download/' + encodeURIComponent(_files[i]);
+  window.location.href = BASE + '/indexer/download/' + encodeURIComponent(_files[i]);
 }
 
 function esc(s) {
@@ -714,7 +717,7 @@ function esc(s) {
 
 function logout() {
   localStorage.clear();
-  location.href = '/auth/login';
+  location.href = BASE + '/auth/login';
 }
 
 fetchDocs(true);

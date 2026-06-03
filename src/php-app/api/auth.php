@@ -13,7 +13,7 @@ $action = $_GET['action'] ?? null;
 if ($action === 'logout') {
     session_start();
     session_destroy();
-    header('Location: /login.php');
+    header('Location: ' . DMS_BASE . '/login.php');
     exit;
 }
 
@@ -48,7 +48,7 @@ try {
     }
 
     // Llamar a API de validación en .NET
-    $dotnetUrl = getenv('DOTNET_API_URL') ?: 'http://dotnet:8080';
+    $dotnetUrl = getenv('DOTNET_API_URL') ?: 'http://dms_dotnet:8080';
     $url = "$dotnetUrl/api/v1/auth/validate";
 
     $ch = curl_init($url);
@@ -101,7 +101,7 @@ try {
         'user_name' => $userData['userName'],
         'email' => $userData['email'],
         'roles' => $userData['roles'],
-        'redirect' => '/'
+        'redirect' => DMS_BASE . '/'
     ]);
 
 } catch (Exception $e) {

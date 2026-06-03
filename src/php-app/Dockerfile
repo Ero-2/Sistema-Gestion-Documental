@@ -13,5 +13,9 @@ RUN docker-php-ext-install pdo pdo_pgsql \
 WORKDIR /var/www/html
 COPY . /var/www/html/
 
+# Bootstrap (define DMS_BASE desde X-Forwarded-Prefix) antes de cada request.
+RUN echo "auto_prepend_file=/var/www/html/config/bootstrap.php" \
+    > /usr/local/etc/php/conf.d/zz-dms.ini
+
 EXPOSE 9000
 # CMD heredado de la imagen base: php-fpm

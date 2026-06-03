@@ -24,10 +24,11 @@ CREATE TABLE IF NOT EXISTS publicdms.documents (
     version         VARCHAR(50),
     file_url        TEXT,
     local_file_name VARCHAR(255),
-    is_active       BOOLEAN DEFAULT TRUE,
-    effective_date  TIMESTAMP,
-    expiration_date TIMESTAMP,
-    last_sync       TIMESTAMPTZ DEFAULT NOW()
+    is_active        BOOLEAN DEFAULT TRUE,
+    effective_date   TIMESTAMP,
+    expiration_date  TIMESTAMP,
+    next_review_date TIMESTAMP,
+    last_sync        TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- Historial append-only de versiones APROBADAS (X.0). Espejo de DocumentVersion

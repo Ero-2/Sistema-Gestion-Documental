@@ -3,7 +3,7 @@ session_start();
 
 // Si ya está autenticado, redirigir
 if (isset($_SESSION['user_id'])) {
-    header('Location: /');
+    header('Location: ' . DMS_BASE . '/');
     exit;
 }
 
@@ -200,7 +200,7 @@ form.addEventListener('submit', async (e) => {
   setStatus('validando credenciales…', 'run');
 
   try {
-    const response = await fetch('/api/auth.php?action=login', {
+    const response = await fetch('<?= DMS_BASE ?>/api/auth.php?action=login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
@@ -209,7 +209,7 @@ form.addEventListener('submit', async (e) => {
 
     if (response.ok) {
       setStatus('acceso concedido — abriendo registro…', 'run');
-      window.location.href = data.redirect || '/';
+      window.location.href = data.redirect || '<?= DMS_BASE ?>/';
     } else {
       setStatus(data.error || 'credenciales inválidas', 'err');
       btn.disabled = false; btnTxt.textContent = 'Acceder al registro';

@@ -84,6 +84,17 @@ builder.Services.AddResponseCaching();
 
 var app = builder.Build();
 
+// Detrás de Nginx con routing por path (/dotnet): respeta el prefijo público.
+// Tag helpers, cookies y static files usan PathBase automáticamente.
+// Sin header (acceso directo :5080) → PathBase vacío → funciona igual.
+app.Use(async (context, next) =>
+{
+    var prefix = context.Request.Headers["X-Forwarded-Prefix"].ToString();
+    if (!string.IsNullOrEmpty(prefix))
+        context.Request.PathBase = new PathString(prefix.TrimEnd('/'));
+    await next(context);
+});
+
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();

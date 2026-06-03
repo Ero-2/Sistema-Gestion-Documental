@@ -1,0 +1,103 @@
+# ══════════════════════════════════════════════════════════
+#  Grupo 2 — PHP  (Portal público / PublicDMS)
+#  Servicios: dms_postgres + dms_php (PHP-FPM)
+#  Arrancar:  docker compose -p dms-php -f docker-compose.php.yml --env-file .env up -d --build
+#  Detener:   docker compose -p dms-php -f docker-compose.php.yml down
+#  Requiere:  red 'dms_backbone' y volumen 'documentos' creados previamente.
+#  Nota:      PHP-FPM escucha :9000; Nginx (grupo FastAPI) hace fastcgi_pass dms_php:9000.
+# ══════════════════════════════════════════════════════════
+
+services:
+
+  # ── PostgreSQL 16 — Read model PublicDMS ──────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: dms_postgres
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB:-PublicDMS}
+      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./db/postgres:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-PublicDMS}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - php_internal
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  # ── PHP 8.3-FPM — Portal público ──────────────────────────
+  # Solo PostgreSQL. Recibe eventos de .NET vía Nginx (api/events.php).
+  # Lee archivos del volumen compartido 'documentos' (r/o).
+  php:
+    build:
+      context: ./src/php-app
+    container_name: dms_php
+    environment:
+      POSTGRES_HOST:     postgres
+      POSTGRES_DB:       ${POSTGRES_DB:-PublicDMS}
+      POSTGRES_USER:     ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      DMS_STORAGE_PATH:  /var/dms/uploads
+      FASTAPI_URL:       http://dms_fastapi:8000
+      FASTAPI_API_KEY:   ${FASTAPI_API_KEY}
+      DOTNET_API_URL:    http://dms_dotnet:8080
+    expose:
+      - "9000"   # FastCGI — accesible solo desde Nginx vía dms_backbone
+    volumes:
+      - documentos:/var/dms/uploads:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - php_internal
+      - dms_backbone
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+
+# ══════════════════════════════════════════════════════════
+#  Volúmenes
+# ══════════════════════════════════════════════════════════
+volumes:
+  postgres_data:
+    name: postgres_data
+    driver: local
+  documentos:
+    external: true
+    name: documentos
+
+# ══════════════════════════════════════════════════════════
+#  Redes
+#  php_internal — aislada: solo postgres + php
+#  dms_backbone — externa compartida: php llega a dms_fastapi/dms_dotnet
+# ══════════════════════════════════════════════════════════
+networks:
+  php_internal:
+    driver: bridge
+  dms_backbone:
+    external: true
+    name: dms_backbone

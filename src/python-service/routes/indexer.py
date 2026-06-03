@@ -2,7 +2,7 @@ import asyncio
 import os
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse
 
 from database import collection
@@ -291,12 +291,14 @@ async def download_file(name: str):
 
 
 @router.get("/viewer/{name}", response_class=HTMLResponse, include_in_schema=False)
-async def viewer_page(name: str):
+async def viewer_page(name: str, request: Request):
     """
     Visor de documentos en el navegador. Obtiene metadatos de MongoDB,
     embebe el contenido extraído cuando aplica y devuelve HTML que renderiza
     el archivo según su extensión.
     """
+    # Prefijo público detrás de Nginx por path (/fastapi).
+    base = request.headers.get("x-forwarded-prefix", "").rstrip("/")
     doc = await collection.find_one(
         {"file_name": name},
         {"_id": 0, "title": 1, "code": 1, "extension": 1, "mime_type": 1,
@@ -315,8 +317,8 @@ async def viewer_page(name: str):
     ext     = (doc.get("extension") or "").lower().lstrip(".")
     isSim   = doc.get("is_simulated", False)
     content = doc.get("content") or ""
-    fileUrl = f"/indexer/file/{name}"
-    dlUrl   = f"/indexer/download/{name}"
+    fileUrl = f"{base}/indexer/file/{name}"
+    dlUrl   = f"{base}/indexer/download/{name}"
 
     simInfo = ""
     if isSim:
@@ -452,7 +454,7 @@ iframe {{ width: 100%; height: 100%; border: none; }}
 <body>
 
 <div class="topbar">
-  <button class="btn-back" onclick="history.length > 1 ? history.back() : (location.href = '/search')">&#8592; volver</button>
+  <button class="btn-back" onclick="history.length > 1 ? history.back() : (location.href = '{base}/search')">&#8592; volver</button>
   <span class="topbar-title">{title}</span>
   {'<span class="ext-badge">' + ext.upper() + '</span>' if ext else ''}
   {'<a href="' + dlUrl + '" class="btn-dl">&#8595; descargar</a>' if not isSim else ''}

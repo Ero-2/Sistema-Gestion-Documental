@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Header
+from fastapi import APIRouter, HTTPException, Header, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 import jwt
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
 # Config
-DOTNET_API_URL = os.getenv("DOTNET_API_URL", "http://dotnet:8080")
+DOTNET_API_URL = os.getenv("DOTNET_API_URL", "http://dms_dotnet:8080")
 JWT_SECRET = os.getenv("JWT_SECRET", "")
 JWT_ALGORITHM = "HS256"
 JWT_EXPIRATION_HOURS = 8
@@ -123,9 +123,10 @@ async def get_current_user(authorization: Optional[str] = Header(default=None)):
 
 
 @router.get("/login", response_class=HTMLResponse)
-async def login_page():
+async def login_page(request: Request):
     """Página de login para FastAPI — consola dms://auth."""
-    return """<!DOCTYPE html>
+    _base = request.headers.get("x-forwarded-prefix", "").rstrip("/")
+    return ("""<!DOCTYPE html>
 <html lang="es">
 <head>
 <meta charset="UTF-8">
@@ -296,6 +297,7 @@ body {
 </form>
 
 <script>
+const BASE = '__BASE__';
 const form   = document.getElementById('loginForm');
 const btn    = document.getElementById('submitBtn');
 const btnTxt = document.getElementById('btnTxt');
@@ -319,7 +321,7 @@ form.addEventListener('submit', async (e) => {
   setStatus('validando credenciales <span class="cursor"></span>', 'run');
 
   try {
-    const res = await fetch('/auth/login', {
+    const res = await fetch(BASE + '/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
@@ -332,7 +334,7 @@ form.addEventListener('submit', async (e) => {
       localStorage.setItem('roles', JSON.stringify(data.roles));
       led.classList.add('on'); ledTxt.textContent = 'autenticado';
       setStatus('sesión establecida — abriendo índice <span class="cursor"></span>', 'run');
-      setTimeout(() => { window.location.href = '/search'; }, 350);
+      setTimeout(() => { window.location.href = BASE + '/search'; }, 350);
     } else {
       ledTxt.textContent = 'rechazado';
       setStatus(data.detail || 'credenciales inválidas', 'err');
@@ -347,4 +349,4 @@ form.addEventListener('submit', async (e) => {
 </script>
 
 </body>
-</html>"""
+</html>""").replace("__BASE__", _base)

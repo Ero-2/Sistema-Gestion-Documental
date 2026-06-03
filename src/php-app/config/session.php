@@ -11,7 +11,7 @@ if (!isset($_SESSION['user_id'])) {
     // Permitir acceso a /login.php sin autenticación
     $request_uri = $_SERVER['REQUEST_URI'];
     if (strpos($request_uri, '/login.php') === false && strpos($request_uri, '/api/auth.php') === false) {
-        header('Location: /login.php');
+        header('Location: ' . DMS_BASE . '/login.php');
         exit;
     }
 }
@@ -41,6 +41,6 @@ function hasAnyRole($roles) {
 // Helper para logout
 function logout() {
     session_destroy();
-    header('Location: /login.php');
+    header('Location: ' . DMS_BASE . '/login.php');
     exit;
 }

@@ -94,7 +94,7 @@ public class PhpSyncService(
     public async Task RegisterMetadataAsync(int postgresId, string code, string title,
         string categoryName, string departmentName, string fileUrl, string version)
     {
-        var fastapiUrl = config["PublicDms:WebhookUrl"] ?? "http://fastapi:8000";
+        var fastapiUrl = config["PublicDms:WebhookUrl"] ?? "http://dms_fastapi:8000";
         var fastapiKey = config["PublicDms:ApiKey"] ?? "";
 
         var payload = new
@@ -114,7 +114,7 @@ public class PhpSyncService(
 
     public async Task UpdateMetadataAsync(int postgresId, Dictionary<string, object> updates)
     {
-        var fastapiUrl = config["PublicDms:WebhookUrl"] ?? "http://fastapi:8000";
+        var fastapiUrl = config["PublicDms:WebhookUrl"] ?? "http://dms_fastapi:8000";
         var fastapiKey = config["PublicDms:ApiKey"] ?? "";
 
         var payload = new
@@ -130,7 +130,7 @@ public class PhpSyncService(
 
     public async Task LogMetadataHistoryAsync(int postgresId, string action, Dictionary<string, object> details)
     {
-        var fastapiUrl = config["PublicDms:WebhookUrl"] ?? "http://fastapi:8000";
+        var fastapiUrl = config["PublicDms:WebhookUrl"] ?? "http://dms_fastapi:8000";
         var fastapiKey = config["PublicDms:ApiKey"] ?? "";
 
         var payload = new

@@ -77,7 +77,7 @@ $nativeExts = array_merge(['pdf', 'docx', 'xlsx', 'xls'], $imageExts, $textExts,
  */
 function fetch_extracted_content(string $name): ?array
 {
-    $base = defined('FASTAPI_URL') ? FASTAPI_URL : (getenv('FASTAPI_URL') ?: 'http://fastapi:8000');
+    $base = defined('FASTAPI_URL') ? FASTAPI_URL : (getenv('FASTAPI_URL') ?: 'http://dms_fastapi:8000');
     $key  = defined('FASTAPI_API_KEY') ? FASTAPI_API_KEY : (getenv('FASTAPI_API_KEY') ?: '');
     $ch = curl_init(rtrim($base, '/') . '/indexer/content/' . rawurlencode($name));
     curl_setopt_array($ch, [
