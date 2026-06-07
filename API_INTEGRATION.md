@@ -17,7 +17,7 @@ Ambas APIs son **independientes**. Un error en una no bloquea la otra.
 Todas las peticiones requieren header `X-API-Key`:
 
 ```bash
-curl -X POST http://fastapi:8000/api/documents/approve \
+curl -X POST http://dms_fastapi:8000/documents/approve \
   -H "X-API-Key: ${FASTAPI_API_KEY}" \
   -H "Content-Type: application/json" \
   -d '{"document_id": 123, ...}'
@@ -33,7 +33,7 @@ environment:
 
 ## API 1: Documents Sync
 
-**Base URL:** `http://fastapi:8000/api/documents`
+**Base URL:** `http://dms_fastapi:8000/documents`
 
 ### POST `/approve`
 
@@ -119,7 +119,7 @@ Marca documento como obsoleto (inactivo).
 
 ## API 2: Metadata Sync
 
-**Base URL:** `http://fastapi:8000/api/metadata`
+**Base URL:** `http://dms_fastapi:8000/metadata`
 
 ### POST `/register`
 
@@ -212,32 +212,32 @@ Obtiene historial completo de cambios.
    ```
    .NET trigger DocumentApprovedEvent
      ↓
-   POST /api/documents/approve
-   POST /api/metadata/register
+   POST /documents/approve
+   POST /metadata/register
    ```
 
 2. **Documento actualizado** (cambio de vigencia/estado)
    ```
    .NET trigger DocumentUpdatedEvent
      ↓
-   POST /api/documents/update
-   POST /api/metadata/update
+   POST /documents/update
+   POST /metadata/update
    ```
 
 3. **Nueva versión** (DocumentVersionCreated)
    ```
    .NET trigger DocumentVersionEvent
      ↓
-   POST /api/documents/version
-   POST /api/metadata/update
+   POST /documents/version
+   POST /metadata/update
    ```
 
 4. **Documento obsoletado**
    ```
    .NET trigger DocumentObsoletedEvent
      ↓
-   POST /api/documents/obsolete
-   POST /api/metadata/history
+   POST /documents/obsolete
+   POST /metadata/history
    ```
 
 ---
@@ -281,7 +281,7 @@ using System.Text.Json;
 public class DmsApiClient {
     private readonly HttpClient _http;
     private readonly string _apiKey;
-    private readonly string _baseUrl = "http://fastapi:8000/api";
+    private readonly string _baseUrl = "http://dms_fastapi:8000";
 
     public DmsApiClient(HttpClient http, string apiKey) {
         _http = http;
@@ -328,7 +328,7 @@ public class DmsApiClient {
 ### curl — Approve
 
 ```bash
-curl -X POST http://localhost:8001/api/documents/approve \
+curl -X POST http://localhost:8001/documents/approve \
   -H "X-API-Key: test-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -347,7 +347,7 @@ curl -X POST http://localhost:8001/api/documents/approve \
 ### curl — Update
 
 ```bash
-curl -X POST http://localhost:8001/api/documents/update \
+curl -X POST http://localhost:8001/documents/update \
   -H "X-API-Key: test-api-key" \
   -H "Content-Type: application/json" \
   -d '{
@@ -360,7 +360,7 @@ curl -X POST http://localhost:8001/api/documents/update \
 ### curl — Register Metadata
 
 ```bash
-curl -X POST http://localhost:8001/api/metadata/register \
+curl -X POST http://localhost:8001/metadata/register \
   -H "X-API-Key: test-api-key" \
   -H "Content-Type: application/json" \
   -d '{

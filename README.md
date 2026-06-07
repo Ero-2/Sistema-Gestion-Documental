@@ -1,40 +1,132 @@
+```
+  ██████╗ ███╗   ███╗███████╗
+  ██╔══██╗████╗ ████║██╔════╝
+  ██║  ██║██╔████╔██║███████╗
+  ██║  ██║██║╚██╔╝██║╚════██║
+  ██████╔╝██║ ╚═╝ ██║███████║
+  ╚═════╝ ╚═╝     ╚═╝╚══════╝
+  Sistema Integral de Gestión Documental
+  Enterprise Multi-Stack Platform · v2.1.0
+```
+
 # Sistema Integral de Gestión Documental
 
 [![Repo](https://img.shields.io/badge/GitHub-Ero--2%2FSistema--Gestion--Documental-blue?logo=github)](https://github.com/Ero-2/Sistema-Gestion-Documental)
+[![.NET](https://img.shields.io/badge/.NET-10-512BD4?logo=dotnet)](#)
+[![PHP](https://img.shields.io/badge/PHP-8.3-777BB4?logo=php)](#)
+[![FastAPI](https://img.shields.io/badge/FastAPI-Python_3.12-009688?logo=fastapi)](#)
+[![Docker](https://img.shields.io/badge/Docker-3_stacks-2496ED?logo=docker)](#)
 
-Sistema multi-stack para gestión, aprobación y consulta pública de documentos normativos, construido con arquitectura de eventos desacoplada.
+Plataforma multi-stack para **gestión, aprobación y consulta pública** de documentos
+normativos. Arquitectura **desacoplada y unidireccional**: .NET es la única fuente de
+verdad y propaga eventos HTTP hacia PHP (portal público) y FastAPI (búsqueda). Ningún
+sistema secundario toca SQL Server.
+
+---
+
+## Tabla de contenidos
+
+- [Arquitectura](#arquitectura)
+- [Servicios y puertos](#servicios-y-puertos)
+- [Requisitos](#requisitos)
+- [Instalación](#instalación)
+- [Gestión de servicios](#gestión-de-servicios)
+- [Stacks independientes](#stacks-independientes)
+- [URLs](#urls)
+- [Usuarios de prueba](#usuarios-de-prueba)
+- [Modo Sandbox](#modo-sandbox)
+- [Flujo de aprobación y versionado](#flujo-de-aprobación-y-versionado)
+- [APIs](#apis)
+- [Estructura del repositorio](#estructura-del-repositorio)
+- [Documentación adicional](#documentación-adicional)
 
 ---
 
 ## Arquitectura
 
-Tres sistemas independientes comunicados únicamente por eventos HTTP desde .NET. Ningún sistema secundario accede a SQL Server directamente.
+Tres `docker-compose` **independientes**, cada uno con su propio proyecto (`-p`), unidos
+por una **red externa compartida** (`dms_backbone`) y un **volumen externo de documentos**.
+Cada stack aísla su base de datos en una red interna privada. Un solo **Nginx** es el
+punto de entrada y enruta **por path**.
 
-```
-┌─────────────────────────────────────────┐
-│  Sistema 1 — .NET Core + SQL Server      │
-│  Usuarios · Roles · Flujos · Versiones   │
-│  Multiempresa · Fuente de verdad         │
-└──────────────┬──────────────┬───────────┘
-               │ evento       │ evento
-               ▼              ▼
-┌──────────────────┐  ┌──────────────────────┐
-│  Sistema 2        │  │  Sistema 3            │
-│  PHP + PostgreSQL │  │  FastAPI + MongoDB    │
-│  Portal público   │  │  Búsqueda full-text   │
-│  Docs aprobados   │  │  Indexación           │
-└──────────────────┘  └──────────────────────┘
+```mermaid
+flowchart TB
+    user([Usuario / Navegador])
+
+    subgraph fastapi_stack["Stack 3 · dms-fastapi"]
+        nginx["dms_nginx<br/>:80 /8443 /8084<br/>routing por path"]
+        fastapi["dms_fastapi<br/>FastAPI :8000"]
+        mongo[("dms_mongodb<br/>:27017 · interno")]
+        fastapi --- mongo
+    end
+
+    subgraph dotnet_stack["Stack 1 · dms-dotnet"]
+        dotnet["dms_dotnet<br/>ASP.NET Core :8080"]
+        sql[("dms_sqlserver<br/>:1433 · interno<br/>FUENTE DE VERDAD")]
+        dotnet --- sql
+    end
+
+    subgraph php_stack["Stack 2 · dms-php"]
+        php["dms_php<br/>PHP-FPM :9000"]
+        pg[("dms_postgres<br/>:5432 · interno")]
+        php --- pg
+    end
+
+    user -->|HTTP :80| nginx
+    nginx -->|/php/ FastCGI| php
+    nginx -->|/dotnet/| dotnet
+    nginx -->|/fastapi/| fastapi
+
+    dotnet -.->|evento approve<br/>via nginx → events.php| nginx
+    dotnet -.->|evento metadata/upsert| fastapi
+
+    docs[("Volumen externo<br/>'documentos'")]
+    dotnet ==>|rw| docs
+    php -. ro .-> docs
+    fastapi -. ro .-> docs
+    nginx -. ro .-> docs
 ```
 
-| Servicio    | Tecnología            | Puerto |
-|-------------|-----------------------|--------|
-| .NET        | ASP.NET Core 10       | 5080   |
-| PHP         | PHP 8.3 + Apache      | 80     |
-| FastAPI     | Python 3.12           | 8001   |
-| SQL Server  | SQL Server 2022       | 1434   |
-| PostgreSQL  | PostgreSQL 16         | 5433   |
-| MongoDB     | MongoDB 7             | 27018  |
-| Nginx       | Nginx (proxy + HTTPS) | 80/8443|
+- **`dms_backbone`** (bridge externa): única red por la que cruzan los stacks. La
+  resolución cross-stack es por **container_name** (`dms_php`, `dms_dotnet`, etc.).
+- **Nginx routing por path** (un solo host en `:80`):
+
+  | Ruta | Destino | Mecanismo |
+  |------|---------|-----------|
+  | `/` | → `302 /php/` | redirect |
+  | `/php/` | `dms_php:9000` (FastCGI) | strip prefix + `X-Forwarded-Prefix` |
+  | `/dotnet/` | `dms_dotnet:8080` (+ SignalR) | strip + `X-Forwarded-Prefix` |
+  | `/fastapi/` | `dms_fastapi:8000` | strip + `X-Forwarded-Prefix` |
+
+  Cada app reconstruye sus enlaces con el prefijo recibido (.NET: `Request.PathBase`;
+  FastAPI: `BASE` inyectado; PHP: `DMS_BASE`). Sin header (acceso directo) → sirve en raíz.
+
+- **Volúmenes:**
+
+  | Volumen | Tipo | Uso |
+  |---------|------|-----|
+  | `sqlserver_data` | nombrado | datos SQL Server |
+  | `postgres_data` | nombrado | datos PostgreSQL |
+  | `mongodb_data` | nombrado | datos MongoDB |
+  | `indices_busqueda` | nombrado | cache/artefactos de búsqueda FastAPI |
+  | `documentos` | **externo compartido** | archivos físicos: `.NET` r/w · `php`/`fastapi`/`nginx` r/o |
+
+---
+
+## Servicios y puertos
+
+| Servicio | Tecnología | Puerto host | Interno | Notas |
+|----------|------------|-------------|---------|-------|
+| Nginx | Nginx (proxy + HTTPS) | `80`, `8443`, `8084` | 80/443/8084 | entrada única + routing por path |
+| .NET | ASP.NET Core 10 | `5080` | 8080 | gestión interna (CalidadSYS) |
+| PHP | PHP 8.3 (FPM) | — | 9000 | servido vía Nginx |
+| FastAPI | Python 3.12 | `8001` | 8000 | búsqueda + APIs · Swagger `/docs` |
+| SQL Server | SQL Server 2022 | `1435` | 1433 | fuente de verdad |
+| PostgreSQL | PostgreSQL 16 | `5433` | 5432 | portal público |
+| MongoDB | MongoDB 7 | `27018` | 27017 | índice full-text |
+
+> Las BD se publican en `127.0.0.1` (solo localhost). Los puertos host son reasignables
+> en `setup.ps1` si hay conflicto.
 
 ---
 
@@ -61,10 +153,11 @@ El instalador pregunta:
 1. **Modo de instalación:**
    - `[1] Sandbox` — genera 10,000 documentos de prueba automáticamente
    - `[2] Development` — sistema limpio, sin documentos
-
 2. **Contraseña maestra** para SQL Server, PostgreSQL y MongoDB
-   - Mínimo 8 caracteres, mayúscula, minúscula, dígito y carácter especial
-   - Ejemplo: `MiPass1!`
+   - Mínimo 8 caracteres, mayúscula, minúscula, dígito y carácter especial (ej. `MiPass1!`)
+
+Si detecta un puerto ocupado, ofrece **reasignarlo** automáticamente y lo persiste en `.env`.
+Si el sistema ya está instalado, abre el **menú de gestión** (ver abajo).
 
 ### Linux / macOS / WSL
 
@@ -74,56 +167,118 @@ cd Sistema-Gestion-Documental
 bash install.sh
 ```
 
-Opciones adicionales:
+Opciones:
 
 ```bash
-bash install.sh --no-build    # usa imágenes cacheadas
-bash install.sh --skip-env    # usa .env existente
-bash install.sh --force       # sobreescribe .env sin preguntar
+bash install.sh --force      # sobreescribe .env sin preguntar
+bash install.sh --no-build   # usa imágenes cacheadas
+bash install.sh --net        # solo un stack (--net | --php | --indexer)
 ```
+
+> El ciclo de vida interactivo (`up`/`down`/`restart`/`reinstall` y el menú de gestión)
+> está implementado en `setup.ps1`. En Linux se usan los comandos `docker compose`
+> directos (ver [Stacks independientes](#stacks-independientes)).
+
+---
+
+## Gestión de servicios
+
+`setup.ps1` incluye subcomandos no interactivos para administrar el ciclo de vida.
+Todos aceptan `-Stack dotnet|php|fastapi` (por defecto, los 3).
+
+| Comando | Acción Docker | Efecto |
+|---------|---------------|--------|
+| `.\setup.ps1 up` | `up -d` | enciende (crea si faltan) |
+| `.\setup.ps1 down` | `stop` | **apaga** — conserva contenedores y datos |
+| `.\setup.ps1 restart` | `restart` | reinicia |
+| `.\setup.ps1 reinstall` | `up -d --build --force-recreate` | rebuild + recrea, **conserva datos** |
+| `.\setup.ps1 status` | `ps` | estado de contenedores |
+| `.\setup.ps1 ports` | — | puertos del sistema (libre/ocupado) |
+| `.\setup.ps1 logs` | `logs` | últimas líneas por contenedor |
+| `.\setup.ps1 validate` | — | HTTP + BD + storage + motor de búsqueda |
+
+Alias: `start`→`up`, `stop`→`down`, `rebuild`→`reinstall`.
+
+### Menú de gestión interactivo
+
+Al correr `.\setup.ps1` con el sistema ya instalado (o `.\setup.ps1 -Diagnose`), aparece
+un menú en bucle que **re-lee el estado real en cada vuelta**:
+
+```
+  GESTION DEL SISTEMA
+  Contenedores DMS  (encendidos: 7 / 7):
+    dms_nginx        [running]
+    ...
+  [U]  Encender (up)
+  [P]  Apagar (stop -- conserva contenedores y datos)
+  [R]  Reiniciar (restart)
+  [I]  Reinstalar (rebuild + recrea, conserva datos)
+  [L]  Reinicializar limpio (elimina volumenes, rebuild)
+  [D]  Menu de diagnostico
+  [S]  Salir
+```
+
+- Tras **apagar**, el menú reaparece para que puedas **encender** de nuevo.
+- Avisa con condicionales si ya están arriba/abajo o si no hay nada que reiniciar.
+- `[L]` es el único que **borra volúmenes de datos** (pide confirmación). El volumen
+  externo `documentos` **no** se elimina.
 
 ---
 
 ## Stacks independientes
 
-Además del instalador completo, cada sistema puede levantarse por separado:
+Cada sistema puede levantarse por separado:
 
 ```powershell
-# Solo .NET + SQL Server
-.\setup.ps1 -Stack net
-
-# Solo PHP + PostgreSQL + Nginx
-.\setup.ps1 -Stack php
-
-# Solo FastAPI + MongoDB
-.\setup.ps1 -Stack indexer
+.\setup.ps1 -Stack dotnet     # .NET + SQL Server   (alias legacy: net)
+.\setup.ps1 -Stack php        # PHP + PostgreSQL
+.\setup.ps1 -Stack fastapi    # FastAPI + MongoDB + Nginx  (alias legacy: indexer)
 ```
 
 ```bash
-# Linux
-bash install.sh --net
-bash install.sh --php
-bash install.sh --indexer
+# Linux (docker compose directo)
+docker network create dms_backbone        # infra compartida (una vez)
+docker volume create documentos
+
+docker compose -p dms-dotnet  -f docker-compose.dotnet.yml  --env-file .env up -d --build
+docker compose -p dms-php     -f docker-compose.php.yml     --env-file .env up -d --build
+docker compose -p dms-fastapi -f docker-compose.fastapi.yml --env-file .env up -d --build
+
+# Detener un stack (conserva datos)
+docker compose -p dms-php -f docker-compose.php.yml stop
 ```
 
-Cada stack tiene su propia red Docker interna y volúmenes independientes. Se comunican a través de la red compartida `dms_backbone`.
+Cada stack tiene su red interna privada (`net_internal` / `php_internal` /
+`indexer_internal`) y se comunica con el resto por la red compartida `dms_backbone`.
 
 ---
 
 ## URLs
 
+### Punto de entrada único (Nginx :80, routing por path)
+
 | Portal | URL |
 |--------|-----|
-| Portal público (PHP) | http://localhost |
-| Portal HTTPS (FastAPI) | https://localhost:8443 |
-| Admin .NET (CalidadSYS) | http://localhost:5080 |
+| Portal público (PHP) | http://localhost/php/ |
+| Gestión interna (.NET) | http://localhost/dotnet/ |
+| Motor de búsqueda (FastAPI) | http://localhost/fastapi/ |
+| Raíz | http://localhost → `302 /php/` |
+
+### Acceso directo (debug)
+
+| Servicio | URL |
+|----------|-----|
+| .NET directo | http://localhost:5080 |
+| .NET vía Nginx | http://localhost:8084 |
 | FastAPI Swagger | http://localhost:8001/docs |
+| FastAPI HTTPS | https://localhost:8443 |
 
 ---
 
 ## Usuarios de prueba
 
-Todos comparten la contraseña ingresada durante la instalación (`Calidad#2026Dev` si se usó el seeder directamente).
+Todos comparten la contraseña ingresada en la instalación
+(`Calidad#2026Dev` si se usó el seeder directamente).
 
 | Rol | Email | Empresa |
 |-----|-------|---------|
@@ -137,56 +292,188 @@ Todos comparten la contraseña ingresada durante la instalación (`Calidad#2026D
 | Viewer | lector@qualitydms.local | ACME |
 | AdminEmpresa | admin.beta@qualitydms.local | BETA |
 
+> Sistema **multiempresa**: SuperAdmin ve todo; AdminEmpresa solo su empresa
+> (aislamiento por `CompanyId` con EF query filters).
+
 ---
 
 ## Modo Sandbox
 
-Al elegir modo **Sandbox** en el instalador, el sistema genera automáticamente:
+Al elegir **Sandbox** en el instalador, el sistema genera automáticamente:
 
 - **10,000 documentos** en SQL Server con datos realistas (Bogus en español)
-- **7,000 aprobados** propagados a PostgreSQL y MongoDB vía las APIs existentes
+- **7,000 aprobados** propagados a PostgreSQL y MongoDB vía las APIs reales
 - **2,000 en revisión** y **1,000 borradores** solo en SQL Server
 
-La propagación usa 50 llamadas concurrentes a las mismas APIs de eventos que usa el flujo real. El proceso tarda ~5 minutos en el primer arranque.
+La propagación usa 50 llamadas concurrentes a las mismas APIs de eventos que el flujo
+real. Tarda ~5 minutos en el primer arranque.
 
 ---
 
-## Flujo de aprobación
+## Flujo de aprobación y versionado
 
-```
-Autor sube documento → borrador 0.1 en .NET
-        ↓
-Envía a revisión → Approver revisa → QualityManager aprueba
-        ↓
-.NET sella versión 1.0 y dispara eventos:
-  → POST /api/events.php?action=approve   (PHP → PostgreSQL)
-  → POST /indexer/upsert                  (FastAPI → MongoDB)
-        ↓
-Documento visible en portal público y buscable full-text
+```mermaid
+stateDiagram-v2
+    [*] --> Borrador: Autor sube (0.1)
+    Borrador --> EnRevision: Enviar a revisión
+    EnRevision --> Aprobado: Approver + QualityManager
+    Aprobado --> [*]: versión sellada 1.0
+
+    Aprobado --> EnRevision: nueva revisión (1.1, 1.2…)
+    Aprobado --> Obsoleto: nueva aprobación (2.0)
+    note right of Obsoleto
+        la versión anterior pasa a
+        obsoleta; sigue consultable
+        en el historial
+    end note
 ```
 
-Nueva revisión genera `1.1, 1.2…` → nueva aprobación genera `2.0` (la `1.0` pasa a obsoleta).
+Al sellar una versión, .NET dispara los eventos hacia los stacks secundarios:
+
+```mermaid
+sequenceDiagram
+    participant Net as .NET (SQL Server)
+    participant Nginx as dms_nginx
+    participant Php as PHP (PostgreSQL)
+    participant Api as FastAPI (MongoDB)
+
+    Note over Net: Documento aprobado (estado 3)
+    Net->>Nginx: POST /php/api/events.php?action=approve
+    Nginx->>Php: FastCGI → events.php
+    Php-->>Net: 200 (insert PostgreSQL)
+
+    Net->>Api: POST /documents/approve  (X-API-Key)
+    Api-->>Net: 200 (insert PostgreSQL espejo)
+    Net->>Api: POST /metadata/register  (X-API-Key)
+    Api-->>Net: 200 (insert MongoDB + índice FTS)
+
+    Note over Php,Api: Documento visible en portal y buscable full-text
+```
+
+Las APIs son **independientes**: un error en una no bloquea la otra.
 
 ---
 
-## Gestión de contenedores
+## APIs
 
-```powershell
-# Ver estado
-docker compose -f compose-all.yml ps
+Todas las APIs viven en el servicio **FastAPI**.
 
-# Logs en tiempo real
-docker compose -f compose-all.yml logs -f
+- **Externo (host):** `http://localhost:8001`
+- **Interno (red `dms_backbone`):** `http://dms_fastapi:8000`
+- **Swagger UI:** http://localhost:8001/docs
 
-# Detener (conserva datos)
-docker compose -f compose-all.yml down
+### Autenticación
 
-# Detener y borrar todos los datos
-docker compose -f compose-all.yml down -v
+Las rutas de integración requieren el header **`X-API-Key`** (valor en `.env` →
+`FASTAPI_API_KEY`). Rutas públicas exentas: `/`, `/health`, `/docs`, `/openapi.json`,
+`/search`, `/search/documents`, `/auth/*`, `/indexer/file/*`, `/indexer/viewer/*`,
+`/indexer/download/*`.
 
-# Reconstruir un servicio
-docker compose -f compose-all.yml up -d --build dotnet
+```bash
+curl -X POST http://localhost:8001/documents/approve \
+  -H "X-API-Key: $FASTAPI_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "document_id": 1, "code": "DOC-001", "title": "Política", "version": "1.0", "file_url": "/uploads/doc-1.pdf" }'
 ```
+
+### Documents Sync — `/documents` → PostgreSQL
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/documents/approve` | inserta documento aprobado |
+| POST | `/documents/update` | actualiza estado / vigencia |
+| POST | `/documents/version` | registra nueva versión |
+| POST | `/documents/obsolete` | marca como obsoleto |
+
+<details><summary>Payload <code>/documents/approve</code></summary>
+
+```json
+{
+  "document_id": 123,
+  "code": "DOC-2024-001",
+  "title": "Política de Calidad",
+  "category_id": 1,
+  "category_name": "Políticas",
+  "department_id": 2,
+  "department_name": "Calidad",
+  "version": "1.0",
+  "file_url": "/uploads/2024/doc-123-v1.pdf",
+  "effective_date": "2024-01-15T10:00:00Z",
+  "expiration_date": "2025-01-15T10:00:00Z"
+}
+```
+</details>
+
+### Metadata Sync — `/metadata` → MongoDB
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/metadata/register` | registra metadatos (al aprobar) |
+| POST | `/metadata/update` | actualiza metadatos |
+| POST | `/metadata/history` | añade evento al historial |
+| GET | `/metadata/history/{postgres_id}` | historial completo |
+
+<details><summary>Payload <code>/metadata/register</code></summary>
+
+```json
+{
+  "postgres_id": 123,
+  "code": "DOC-2024-001",
+  "title": "Política de Calidad",
+  "category_name": "Políticas",
+  "department_name": "Calidad",
+  "file_url": "/uploads/2024/doc-123-v1.pdf",
+  "version": "1.0"
+}
+```
+</details>
+
+### Indexer — `/indexer` (indexación + archivos)
+
+| Método | Ruta | Descripción | Auth |
+|--------|------|-------------|------|
+| POST | `/indexer/upsert` | inserta/actualiza doc + extrae texto | X-API-Key |
+| POST | `/indexer/obsolete` | retira del índice | X-API-Key |
+| GET | `/indexer/search` | búsqueda interna | X-API-Key |
+| GET | `/indexer/file/{name}` | sirve el archivo físico | pública |
+| GET | `/indexer/download/{name}` | descarga | pública |
+| GET | `/indexer/viewer/{name}` | visor HTML | pública |
+| GET | `/indexer/content/{name}` | texto extraído | X-API-Key |
+
+### Search — búsqueda reutilizable (consumida por .NET y PHP)
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| GET | `/search/documents` | API JSON full-text + filtro empresa |
+| GET | `/search` | UI HTML de búsqueda |
+
+Parámetros de `/search/documents`:
+
+| Param | Tipo | Default | Descripción |
+|-------|------|---------|-------------|
+| `q` | string | — | término (>=2 chars → full-text; vacío → todos) |
+| `company_id` | int | — | aislamiento multiempresa |
+| `status` | string | `active` | `active` \| `obsolete` \| `all` |
+| `limit` | int | `100` | tamaño de página (1–500) |
+| `offset` | int | `0` | desplazamiento (paginación) |
+
+```bash
+curl "http://localhost:8001/search/documents?q=calidad&company_id=1&status=active&limit=20"
+```
+
+### Auth y Admin
+
+| Método | Ruta | Descripción |
+|--------|------|-------------|
+| POST | `/auth/login` | login (JSON) |
+| GET | `/auth/me` | usuario actual |
+| GET | `/admin/stats` | métricas del índice |
+| GET | `/admin/docs` | listado admin |
+| GET | `/admin/viewer` | visor admin (HTML) |
+| GET | `/health` | healthcheck |
+
+> Documentación detallada de payloads, manejo de errores y ejemplos .NET/curl en
+> [`API_INTEGRATION.md`](API_INTEGRATION.md).
 
 ---
 
@@ -194,20 +481,33 @@ docker compose -f compose-all.yml up -d --build dotnet
 
 ```
 /
-├── compose-all.yml         ← Todos los stacks juntos
-├── compose-net.yml         ← Stack 1: .NET + SQL Server
-├── compose-php.yml         ← Stack 2: PHP + PostgreSQL + Nginx
-├── compose-indexer.yml     ← Stack 3: FastAPI + MongoDB
-├── install.sh              ← Instalador Linux/macOS/WSL
-├── setup.ps1               ← Instalador Windows PowerShell
-├── scripts/                ← Módulos del instalador
+├── docker-compose.dotnet.yml    ← Stack 1: .NET + SQL Server
+├── docker-compose.php.yml       ← Stack 2: PHP + PostgreSQL
+├── docker-compose.fastapi.yml   ← Stack 3: FastAPI + MongoDB + Nginx
+├── compose-all.legacy.yml       ← Monolito anterior (respaldo, no se ejecuta)
+├── setup.ps1                    ← Instalador + gestión (Windows PowerShell)
+├── install.sh                   ← Instalador (Linux/macOS/WSL)
+├── scripts/                     ← Módulos del instalador
 ├── src/
-│   ├── dotnet-core/        ← CalidadSYS (ASP.NET Core)
-│   ├── php-app/            ← PublicDMS (PHP)
-│   └── python-service/     ← Motor de búsqueda (FastAPI)
+│   ├── dotnet-core/             ← CalidadSYS (ASP.NET Core) — fuente de verdad
+│   ├── php-app/                 ← PublicDMS (PHP) — portal público
+│   └── python-service/          ← Motor de búsqueda + APIs (FastAPI)
+│       ├── main.py              ← app + middleware X-API-Key + índices Mongo
+│       └── routes/              ← documents_sync · metadata_sync · indexer · search · auth · admin
 ├── db/
-│   ├── postgres/           ← Schema PostgreSQL
-│   └── mongo/              ← Init MongoDB
-└── docker/
-    └── nginx/              ← Configuración Nginx
+│   ├── postgres/                ← Schema PostgreSQL
+│   └── mongo/                   ← Init MongoDB
+├── docker/
+│   ├── dotnet-core/  php-app/  python-service/   ← Dockerfiles
+│   └── nginx/                   ← Dockerfile + nginx.conf (routing por path)
+└── storage/                     ← (montaje local de documentos)
 ```
+
+---
+
+## Documentación adicional
+
+| Documento | Contenido |
+|-----------|-----------|
+| [`ARQUITECTURA_DOCKER.md`](ARQUITECTURA_DOCKER.md) | refactor a 3 stacks: redes, volúmenes, wiring por container name, riesgos |
+| [`API_INTEGRATION.md`](API_INTEGRATION.md) | detalle de payloads, errores y ejemplos de cliente .NET |
