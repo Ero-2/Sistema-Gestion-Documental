@@ -1,103 +1,153 @@
 #!/usr/bin/env bash
-# Docker Compose operations — multi-stack aware
+# Docker Compose operations — 3 stacks independientes (dms-dotnet / dms-php / dms-fastapi)
+# Cada stack: su propio proyecto (-p), comparten .env raiz, red dms_backbone y volumen documentos.
 
 COMPOSE_CMD="${COMPOSE_CMD:-docker compose}"
+SHARED_ENV="${SHARED_ENV:-.env}"
 
-# Selecciona el compose file y el env file según STACK
-_compose_args() {
-    case "${STACK:-all}" in
-        net)
-            echo "--env-file .env.net -f compose-net.yml"
-            ;;
-        php)
-            echo "--env-file .env.php -f compose-php.yml"
-            ;;
-        indexer)
-            echo "--env-file .env.indexer -f compose-indexer.yml"
-            ;;
-        all|*)
-            echo "-f compose-all.yml"
-            ;;
+# ── Tabla de stacks ───────────────────────────────────────────
+# key -> compose file
+_stack_compose() {
+    case "$1" in
+        dotnet)  echo "docker-compose.dotnet.yml" ;;
+        php)     echo "docker-compose.php.yml" ;;
+        fastapi) echo "docker-compose.fastapi.yml" ;;
+    esac
+}
+# key -> nombre de proyecto docker
+_stack_project() {
+    case "$1" in
+        dotnet)  echo "dms-dotnet" ;;
+        php)     echo "dms-php" ;;
+        fastapi) echo "dms-fastapi" ;;
     esac
 }
 
-# Crea la red compartida dms_backbone si no existe.
-# No se usa en el modo "all" porque compose-all.yml tiene su propia red.
-ensure_backbone_network() {
-    [ "${STACK:-all}" = "all" ] && return 0
+# Lista de stacks a operar segun seleccion ("all" = los 3, en orden de arranque).
+# Orden: dotnet (SQL) y php (Postgres) primero; fastapi+nginx al final (nginx proxya a los otros).
+_stack_list() {
+    local sel="${1:-all}"
+    case "$sel" in
+        all) echo "dotnet php fastapi" ;;
+        *)   echo "$sel" ;;
+    esac
+}
 
+# Ejecuta un comando compose sobre un stack: _compose <key> <accion...>
+_compose() {
+    local key="$1"; shift
+    # shellcheck disable=SC2086
+    $COMPOSE_CMD -p "$(_stack_project "$key")" --env-file "$SHARED_ENV" -f "$(_stack_compose "$key")" "$@"
+}
+
+# ── Infra compartida: red dms_backbone + volumen externo documentos (idempotente) ─
+ensure_shared_infra() {
     if docker network inspect dms_backbone > /dev/null 2>&1; then
-        log_info "Network dms_backbone already exists"
+        log_info "Red dms_backbone ya existe"
     else
-        spinner_start "Creating shared network dms_backbone..."
-        docker network create dms_backbone >> "$LOG_FILE" 2>&1
-        spinner_stop
-        log_ok "Network dms_backbone created"
+        docker network create dms_backbone >> "${LOG_FILE:-/dev/null}" 2>&1
+        log_ok "Red dms_backbone creada"
+    fi
+    if docker volume inspect documentos > /dev/null 2>&1; then
+        log_info "Volumen 'documentos' ya existe"
+    else
+        docker volume create documentos >> "${LOG_FILE:-/dev/null}" 2>&1
+        log_ok "Volumen 'documentos' creado"
     fi
 }
 
-# Crea el directorio de uploads compartido en el host.
-# Reemplaza el volumen nombrado uploads_data en los stacks separados.
-ensure_uploads_dir() {
-    [ "${STACK:-all}" = "all" ] && return 0
-
-    if [ ! -d "./data/uploads" ]; then
-        mkdir -p ./data/uploads
-        log_ok "Created ./data/uploads  ${GRAY}(shared bind mount for PDFs)${RESET}"
-    else
-        log_info "./data/uploads already exists"
-    fi
-}
-
+# ── Levantar (build + up -d) los stacks seleccionados ─────────
 docker_up() {
     log_step "Starting containers  ${GRAY}[stack: ${STACK:-all}]${RESET}"
 
-    ensure_backbone_network
-    ensure_uploads_dir
+    ensure_shared_infra
 
     local build_flag="--build"
     [ "${NO_BUILD:-false}" = true ] && build_flag=""
 
-    local args
-    args=$(_compose_args)
+    local key rc
+    for key in $(_stack_list "${STACK:-all}"); do
+        if [ "${VERBOSE:-false}" = true ]; then
+            log_info "Running: $COMPOSE_CMD -p $(_stack_project "$key") -f $(_stack_compose "$key") up -d $build_flag"
+            echo
+            # shellcheck disable=SC2086
+            _compose "$key" up -d $build_flag 2>&1 | tee -a "$LOG_FILE"
+            rc=${PIPESTATUS[0]}
+        else
+            spinner_start "[$(_stack_project "$key")] building & starting..."
+            # shellcheck disable=SC2086
+            _compose "$key" up -d $build_flag >> "$LOG_FILE" 2>&1
+            rc=$?
+            spinner_stop
+        fi
 
-    if [ "${VERBOSE:-false}" = true ]; then
-        log_info "Running: $COMPOSE_CMD $args up -d $build_flag"
-        echo
-        # shellcheck disable=SC2086
-        $COMPOSE_CMD $args up -d $build_flag 2>&1 | tee -a "$LOG_FILE"
-        local rc=${PIPESTATUS[0]}
-    else
-        spinner_start "Building images and starting services..."
-        # shellcheck disable=SC2086
-        $COMPOSE_CMD $args up -d $build_flag >> "$LOG_FILE" 2>&1
-        local rc=$?
-        spinner_stop
-    fi
-
-    if [ "$rc" -ne 0 ]; then
-        log_error "docker compose up failed (exit $rc)"
-        log_warn "Full output: $LOG_FILE"
-        log_warn "Diagnose:   $COMPOSE_CMD $args logs"
-        exit 1
-    fi
+        if [ "$rc" -ne 0 ]; then
+            log_error "[$(_stack_project "$key")] docker compose up failed (exit $rc)"
+            log_warn "Full output: $LOG_FILE"
+            log_warn "Diagnose:   $COMPOSE_CMD -p $(_stack_project "$key") -f $(_stack_compose "$key") logs"
+            exit 1
+        fi
+        log_ok "[$(_stack_project "$key")] started"
+    done
 
     log_ok "All containers started"
 }
 
-docker_ps() {
-    local args
-    args=$(_compose_args)
-    echo
-    # shellcheck disable=SC2086
-    $COMPOSE_CMD $args ps 2>/dev/null || true
+# ── Acciones de ciclo de vida (subcomandos) ───────────────────
+# Apagar: stop (conserva contenedores y datos).
+docker_stop() {
+    log_step "Apagando servicios  ${GRAY}[stack: ${STACK:-all}]${RESET}"
+    local key
+    for key in $(_stack_list "${STACK:-all}"); do
+        log_info "[$(_stack_project "$key")] stop"
+        _compose "$key" stop
+    done
+    log_ok "Servicios apagados (contenedores y datos conservados)"
 }
 
+docker_restart() {
+    log_step "Reiniciando servicios  ${GRAY}[stack: ${STACK:-all}]${RESET}"
+    local key
+    for key in $(_stack_list "${STACK:-all}"); do
+        log_info "[$(_stack_project "$key")] restart"
+        _compose "$key" restart
+    done
+    log_ok "Servicios reiniciados"
+}
+
+# Reinstalar: rebuild imagenes + recrea contenedores, conserva volumenes/datos.
+docker_reinstall() {
+    log_step "Reinstalando (rebuild + recrea, conserva datos)  ${GRAY}[stack: ${STACK:-all}]${RESET}"
+    ensure_shared_infra
+    local key
+    for key in $(_stack_list "${STACK:-all}"); do
+        log_info "[$(_stack_project "$key")] up -d --build --force-recreate"
+        _compose "$key" up -d --build --force-recreate
+    done
+    log_ok "Reinstalacion completa"
+}
+
+docker_ps() {
+    echo
+    docker ps -a --filter "name=dms_" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}" 2>/dev/null || true
+    echo
+}
+
+docker_logs() {
+    local key
+    for key in $(_stack_list "${STACK:-all}"); do
+        echo
+        printf "  ===== %s =====\n" "$(_stack_project "$key")"
+        _compose "$key" logs --tail "${LOG_TAIL:-60}" 2>&1 || true
+    done
+}
+
+# ── Rollback en fallo de instalacion (down -v de lo seleccionado) ─
 docker_down_volumes() {
-    local args
-    args=$(_compose_args)
     log_warn "Rolling back — stopping and removing containers + volumes"
-    # shellcheck disable=SC2086
-    $COMPOSE_CMD $args down -v --remove-orphans >> "$LOG_FILE" 2>&1 || true
+    local key
+    for key in $(_stack_list "${STACK:-all}"); do
+        _compose "$key" down -v --remove-orphans >> "${LOG_FILE:-/dev/null}" 2>&1 || true
+    done
     log_ok "Rollback complete"
 }

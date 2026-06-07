@@ -6,9 +6,18 @@
 #    bash install.sh
 #
 #  Instalación parcial:
-#    bash install.sh --net        → .NET + SQL Server
-#    bash install.sh --php        → PHP + PostgreSQL + Nginx
-#    bash install.sh --indexer    → FastAPI + MongoDB
+#    bash install.sh --dotnet     → .NET + SQL Server   (alias: --net)
+#    bash install.sh --php        → PHP + PostgreSQL
+#    bash install.sh --fastapi    → FastAPI + MongoDB + Nginx  (alias: --indexer)
+#
+#  Gestión de servicios (no interactivos):
+#    bash install.sh up           → encender contenedores (start)
+#    bash install.sh down         → apagar contenedores (stop -- los conserva)
+#    bash install.sh restart      → reiniciar
+#    bash install.sh reinstall    → rebuild + recrea (conserva datos)
+#    bash install.sh status       → estado de contenedores
+#    bash install.sh logs         → ultimas lineas por contenedor
+#       (todos o con --dotnet|--php|--fastapi)
 #
 #  Opciones adicionales:
 #    -v, --verbose    Mostrar output completo de Docker
@@ -27,9 +36,11 @@ VERBOSE=false
 FORCE=false
 NO_BUILD=false
 SKIP_ENV=false
-STACK="all"       # all | net | php | indexer
+STACK="all"       # all | dotnet | php | fastapi
+SUBCMD=""         # "" = instalar | up | down | restart | reinstall | status | logs
 MASTER_PASSWORD=""
 COMPOSE_CMD="docker compose"
+SHARED_ENV=".env"
 ROLLBACK_TRIGGERED=false
 
 export LOG_DIR="$INSTALL_DIR/logs"
@@ -45,29 +56,53 @@ done
 parse_args() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            # Subcomandos de ciclo de vida (posicionales, no interactivos)
+            up|start)        SUBCMD="up" ;;
+            down|stop)       SUBCMD="down" ;;
+            restart)         SUBCMD="restart" ;;
+            reinstall|rebuild) SUBCMD="reinstall" ;;
+            status|ps)       SUBCMD="status" ;;
+            logs)            SUBCMD="logs" ;;
+            install|all)     SUBCMD="" ;;          # instalacion completa (default)
+            # Selección de stack (acepta nombres nuevos y alias legacy)
+            --dotnet|--net)     STACK="dotnet" ;;
+            --php)              STACK="php" ;;
+            --fastapi|--indexer) STACK="fastapi" ;;
+            # Opciones
             -v|--verbose)   VERBOSE=true ;;
             -f|--force)     FORCE=true ;;
             --no-build)     NO_BUILD=true ;;
             --skip-env)     SKIP_ENV=true ;;
-            --net)          STACK="net" ;;
-            --php)          STACK="php" ;;
-            --indexer)      STACK="indexer" ;;
             -h|--help)      _show_help; exit 0 ;;
             *) printf "  Unknown option: %s\n" "$1" >&2; exit 1 ;;
         esac
         shift
     done
+
+    # Normalizar alias legacy de stack -> claves nuevas
+    case "$STACK" in
+        net)     STACK="dotnet" ;;
+        indexer) STACK="fastapi" ;;
+    esac
 }
 
 _show_help() {
     cat <<EOF
 
-Usage: bash install.sh [STACK] [OPTIONS]
+Usage: bash install.sh [COMANDO] [STACK] [OPTIONS]
 
-Stack (opcional — sin flag levanta todo):
-      --net        .NET Core + SQL Server
-      --php        PHP + PostgreSQL + Nginx
-      --indexer    FastAPI + MongoDB
+Comando (opcional — sin comando = instalación completa):
+      up | start     Encender contenedores
+      down | stop    Apagar contenedores (los conserva)
+      restart        Reiniciar
+      reinstall      Rebuild + recrea (conserva datos)
+      status | ps    Estado de contenedores
+      logs           Últimas líneas por contenedor
+
+Stack (opcional — sin flag aplica a todo):
+      --dotnet     .NET Core + SQL Server   (alias: --net)
+      --php        PHP + PostgreSQL
+      --fastapi    FastAPI + MongoDB + Nginx  (alias: --indexer)
 
 Options:
   -v, --verbose    Show full docker build output
@@ -77,12 +112,14 @@ Options:
   -h, --help       Show this help
 
 Ejemplos:
-  bash install.sh                   # Levanta los 3 stacks
-  bash install.sh --net             # Solo .NET + SQL Server
-  bash install.sh --php --no-build  # PHP stack sin rebuild
+  bash install.sh                   # Instala y levanta los 3 stacks
+  bash install.sh --dotnet          # Solo .NET + SQL Server
+  bash install.sh up                # Encender todo
+  bash install.sh down --php        # Apagar solo el stack PHP
+  bash install.sh reinstall         # Rebuild conservando datos
 
-Nota: Los stacks separados requieren la red compartida dms_backbone.
-El instalador la crea automáticamente si no existe.
+Nota: Los stacks comparten la red dms_backbone y el volumen externo
+'documentos'. El instalador los crea automáticamente si no existen.
 
 EOF
 }
@@ -109,37 +146,42 @@ show_dashboard() {
 
     # ── URLs por stack ────────────────────────────────────────
     case "$STACK" in
-        net)
+        dotnet)
             printf "  ${CYAN}PORTALES${RESET}\n"
             printf "  ${WHITE}%-28s${RESET} %s\n" "Admin (CalidadSYS)" "http://localhost:5080"
             echo
             printf "  ${CYAN}BASES DE DATOS${RESET}\n"
-            printf "  ${GRAY}%-28s %s${RESET}\n" "SQL Server" "localhost:1434"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "SQL Server" "localhost:1435"
             ;;
         php)
             printf "  ${CYAN}PORTALES${RESET}\n"
-            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal Publico (PHP)" "http://localhost"
-            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal HTTPS" "https://localhost:8443"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal Publico (PHP)" "http://localhost/php/"
             echo
             printf "  ${CYAN}BASES DE DATOS${RESET}\n"
             printf "  ${GRAY}%-28s %s${RESET}\n" "PostgreSQL" "localhost:5433"
             ;;
-        indexer)
+        fastapi)
             printf "  ${CYAN}PORTALES${RESET}\n"
-            printf "  ${WHITE}%-28s${RESET} %s\n" "FastAPI Docs" "http://localhost:8001/docs"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Busqueda (FastAPI)" "http://localhost/fastapi/"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "FastAPI Swagger" "http://localhost:8001/docs"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "FastAPI HTTPS" "https://localhost:8443"
             echo
             printf "  ${CYAN}BASES DE DATOS${RESET}\n"
             printf "  ${GRAY}%-28s %s${RESET}\n" "MongoDB" "localhost:27018"
             ;;
         all|*)
-            printf "  ${CYAN}PORTALES${RESET}\n"
-            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal Publico (PHP)" "http://localhost"
-            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal HTTPS (FastAPI)" "https://localhost:8443"
-            printf "  ${WHITE}%-28s${RESET} %s\n" "Admin .NET (CalidadSYS)" "http://localhost:5080"
-            printf "  ${WHITE}%-28s${RESET} %s\n" "FastAPI Swagger" "http://localhost:8001/docs"
+            printf "  ${CYAN}PORTALES${RESET}  ${GRAY}(routing por path via Nginx :80)${RESET}\n"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Portal Publico (PHP)" "http://localhost/php/"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Gestion interna (.NET)" "http://localhost/dotnet/"
+            printf "  ${WHITE}%-28s${RESET} %s\n" "Busqueda (FastAPI)" "http://localhost/fastapi/"
+            echo
+            printf "  ${CYAN}ACCESO DIRECTO${RESET}\n"
+            printf "  ${GRAY}%-28s %s${RESET}\n" ".NET directo" "http://localhost:5080"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "FastAPI Swagger" "http://localhost:8001/docs"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "FastAPI HTTPS" "https://localhost:8443"
             echo
             printf "  ${CYAN}BASES DE DATOS${RESET}\n"
-            printf "  ${GRAY}%-28s %s${RESET}\n" "SQL Server" "localhost:1434"
+            printf "  ${GRAY}%-28s %s${RESET}\n" "SQL Server" "localhost:1435"
             printf "  ${GRAY}%-28s %s${RESET}\n" "PostgreSQL" "localhost:5433"
             printf "  ${GRAY}%-28s %s${RESET}\n" "MongoDB" "localhost:27018"
             ;;
@@ -182,16 +224,18 @@ _cleanup() {
     local code=$?
     spinner_stop 2>/dev/null || true
     show_cursor
-    if [ "$code" -ne 0 ] && [ "$ROLLBACK_TRIGGERED" = false ]; then
+    # Solo en instalacion completa (no en subcomandos up/down/status/...).
+    if [ "$code" -ne 0 ] && [ "$ROLLBACK_TRIGGERED" = false ] && [ -z "${SUBCMD:-}" ]; then
         ROLLBACK_TRIGGERED=true
         echo
         log_error "Installation failed (exit code: $code)"
         echo
         printf "  ${YELLOW}Diagnose:${RESET}\n"
         printf "    cat %s\n" "$LOG_FILE"
+        printf "    bash install.sh logs\n"
         echo
-        printf "  ${YELLOW}Clean up:${RESET}\n"
-        printf "    docker compose -f compose-%s.yml down -v\n" "$STACK"
+        printf "  ${YELLOW}Clean up (elimina volumenes del stack):${RESET}\n"
+        printf "    docker compose -p dms-%s -f docker-compose.%s.yml down -v\n" "$STACK" "$STACK"
         echo
     fi
 }
@@ -213,6 +257,20 @@ main() {
     } >> "$LOG_FILE"
 
     show_banner
+
+    # ── Subcomandos de ciclo de vida (no interactivos) ────────
+    if [ -n "$SUBCMD" ]; then
+        case "$SUBCMD" in
+            up)        docker_up ;;          # build + up -d (incluye infra compartida)
+            down)      docker_stop ;;        # stop: apaga, conserva contenedores
+            restart)   docker_restart ;;
+            reinstall) docker_reinstall ;;
+            status)    docker_ps ;;
+            logs)      docker_logs ;;
+        esac
+        echo
+        exit 0
+    fi
 
     log_info "Stack:    ${WHITE}${STACK}${RESET}"
     log_info "Log file: ${GRAY}$LOG_FILE${RESET}"

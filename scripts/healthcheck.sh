@@ -66,7 +66,7 @@ wait_all_services() {
     local failed=0
 
     case "${STACK:-all}" in
-        net)
+        dotnet)
             log_info "SQL Server may take up to 90s on first boot."
             echo
             wait_for_service "SQL Server"  dms_sqlserver 120 || failed=1
@@ -74,12 +74,12 @@ wait_all_services() {
             ;;
         php)
             wait_for_service "PostgreSQL"  dms_postgres   60 || failed=1
-            wait_for_service "PHP/Apache"  dms_php        60 || failed=1
-            wait_for_service "Nginx"       dms_nginx      30 || failed=1
+            wait_for_service "PHP-FPM"     dms_php        60 || failed=1
             ;;
-        indexer)
+        fastapi)
             wait_for_service "MongoDB"     dms_mongodb    60 || failed=1
             wait_for_service "FastAPI"     dms_fastapi    60 || failed=1
+            wait_for_service "Nginx"       dms_nginx      30 || failed=1
             ;;
         all|*)
             log_info "SQL Server may take up to 90s on first boot."

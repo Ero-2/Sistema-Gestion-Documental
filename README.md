@@ -49,43 +49,60 @@ por una **red externa compartida** (`dms_backbone`) y un **volumen externo de do
 Cada stack aísla su base de datos en una red interna privada. Un solo **Nginx** es el
 punto de entrada y enruta **por path**.
 
+**Desacoplada y unidireccional:** los eventos fluyen **solo** desde .NET hacia los
+secundarios (flechas rojas). PHP y FastAPI **nunca** escriben en SQL Server ni llaman de
+vuelta a .NET, y **no hay polling**. Si un secundario cae, .NET sigue siendo la fuente de
+verdad. El ingreso de usuarios (flechas azules) es independiente del canal de eventos.
+
 ```mermaid
 flowchart TB
     user([Usuario / Navegador])
 
-    subgraph fastapi_stack["Stack 3 · dms-fastapi"]
+    subgraph dotnet_stack["Stack 1 · dms-dotnet — FUENTE DE VERDAD"]
+        dotnet["dms_dotnet<br/>ASP.NET Core :8080"]
+        sql[("dms_sqlserver<br/>:1433 · interno")]
+        dotnet --- sql
+    end
+
+    subgraph php_stack["Stack 2 · dms-php — réplica de lectura"]
+        php["dms_php<br/>PHP-FPM :9000"]
+        pg[("dms_postgres<br/>:5432 · interno")]
+        php --- pg
+    end
+
+    subgraph fastapi_stack["Stack 3 · dms-fastapi — índice de búsqueda"]
         nginx["dms_nginx<br/>:80 /8443 /8084<br/>routing por path"]
         fastapi["dms_fastapi<br/>FastAPI :8000"]
         mongo[("dms_mongodb<br/>:27017 · interno")]
         fastapi --- mongo
     end
 
-    subgraph dotnet_stack["Stack 1 · dms-dotnet"]
-        dotnet["dms_dotnet<br/>ASP.NET Core :8080"]
-        sql[("dms_sqlserver<br/>:1433 · interno<br/>FUENTE DE VERDAD")]
-        dotnet --- sql
-    end
-
-    subgraph php_stack["Stack 2 · dms-php"]
-        php["dms_php<br/>PHP-FPM :9000"]
-        pg[("dms_postgres<br/>:5432 · interno")]
-        php --- pg
-    end
-
+    %% Ingreso de usuarios (azul) — independiente de los eventos
     user -->|HTTP :80| nginx
     nginx -->|/php/ FastCGI| php
     nginx -->|/dotnet/| dotnet
     nginx -->|/fastapi/| fastapi
 
-    dotnet -.->|evento approve<br/>via nginx → events.php| nginx
-    dotnet -.->|evento metadata/upsert| fastapi
+    %% Propagación de eventos (rojo) — SOLO .NET -> secundarios
+    dotnet ==>|evento approve<br/>vía nginx → events.php| php
+    dotnet ==>|evento metadata / upsert| fastapi
 
     docs[("Volumen externo<br/>'documentos'")]
-    dotnet ==>|rw| docs
+    dotnet -->|rw| docs
     php -. ro .-> docs
     fastapi -. ro .-> docs
-    nginx -. ro .-> docs
+
+    classDef truth fill:#fde2e2,stroke:#c0392b,stroke-width:2px;
+    classDef sec fill:#e8f1fb,stroke:#2980b9;
+    class dotnet,sql truth;
+    class php,pg,fastapi,mongo,nginx sec;
+    linkStyle 3,4,5,6 stroke:#2980b9,stroke-width:1.5px;
+    linkStyle 7,8 stroke:#c0392b,stroke-width:2.5px;
 ```
+
+> Las flechas **rojas gruesas** = eventos (un solo sentido, .NET → secundarios). Las
+> **azules** = tráfico de usuarios vía Nginx. No existe ninguna flecha de PHP/FastAPI hacia
+> SQL Server: ese es el corazón del desacoplamiento.
 
 - **`dms_backbone`** (bridge externa): única red por la que cruzan los stacks. La
   resolución cross-stack es por **container_name** (`dms_php`, `dms_dotnet`, etc.).
@@ -172,30 +189,32 @@ Opciones:
 ```bash
 bash install.sh --force      # sobreescribe .env sin preguntar
 bash install.sh --no-build   # usa imágenes cacheadas
-bash install.sh --net        # solo un stack (--net | --php | --indexer)
+bash install.sh --dotnet     # solo un stack (--dotnet | --php | --fastapi)
 ```
 
-> El ciclo de vida interactivo (`up`/`down`/`restart`/`reinstall` y el menú de gestión)
-> está implementado en `setup.ps1`. En Linux se usan los comandos `docker compose`
-> directos (ver [Stacks independientes](#stacks-independientes)).
+`install.sh` también soporta los mismos subcomandos de ciclo de vida que `setup.ps1`
+(ver [Gestión de servicios](#gestión-de-servicios)). El **menú interactivo** de gestión
+es exclusivo de `setup.ps1` (Windows).
 
 ---
 
 ## Gestión de servicios
 
-`setup.ps1` incluye subcomandos no interactivos para administrar el ciclo de vida.
-Todos aceptan `-Stack dotnet|php|fastapi` (por defecto, los 3).
+`setup.ps1` (Windows) e `install.sh` (Linux/macOS) incluyen subcomandos no interactivos
+para administrar el ciclo de vida. Aceptan selección de stack
+(`-Stack dotnet|php|fastapi` en PowerShell; `--dotnet|--php|--fastapi` en bash);
+por defecto aplican a los 3.
 
-| Comando | Acción Docker | Efecto |
-|---------|---------------|--------|
-| `.\setup.ps1 up` | `up -d` | enciende (crea si faltan) |
-| `.\setup.ps1 down` | `stop` | **apaga** — conserva contenedores y datos |
-| `.\setup.ps1 restart` | `restart` | reinicia |
-| `.\setup.ps1 reinstall` | `up -d --build --force-recreate` | rebuild + recrea, **conserva datos** |
-| `.\setup.ps1 status` | `ps` | estado de contenedores |
-| `.\setup.ps1 ports` | — | puertos del sistema (libre/ocupado) |
-| `.\setup.ps1 logs` | `logs` | últimas líneas por contenedor |
-| `.\setup.ps1 validate` | — | HTTP + BD + storage + motor de búsqueda |
+| Acción | Windows | Linux/macOS | Docker | Efecto |
+|--------|---------|-------------|--------|--------|
+| Encender | `.\setup.ps1 up` | `bash install.sh up` | `up -d` | enciende (crea si faltan) |
+| Apagar | `.\setup.ps1 down` | `bash install.sh down` | `stop` | **apaga** — conserva contenedores y datos |
+| Reiniciar | `.\setup.ps1 restart` | `bash install.sh restart` | `restart` | reinicia |
+| Reinstalar | `.\setup.ps1 reinstall` | `bash install.sh reinstall` | `up -d --build --force-recreate` | rebuild + recrea, **conserva datos** |
+| Estado | `.\setup.ps1 status` | `bash install.sh status` | `ps` | estado de contenedores |
+| Logs | `.\setup.ps1 logs` | `bash install.sh logs` | `logs` | últimas líneas por contenedor |
+| Puertos | `.\setup.ps1 ports` | — | — | puertos del sistema (libre/ocupado) |
+| Validar | `.\setup.ps1 validate` | — | — | HTTP + BD + storage + motor de búsqueda |
 
 Alias: `start`→`up`, `stop`→`down`, `rebuild`→`reinstall`.
 

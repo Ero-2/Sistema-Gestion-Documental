@@ -72,7 +72,8 @@ prompt_master_password() {
     MASTER_PASSWORD="$p1"
 }
 
-# Genera .env para compose-all.yml (todos los stacks en un solo proyecto)
+# Genera el .env raiz unico — consumido por los 3 docker-compose (--env-file .env).
+# Equivalente al .env que produce setup.ps1. Las URLs cross-stack van inline en los compose.
 _write_env_all() {
     local pass="$1" api_key="$2" jwt="$3"
     cat > .env <<EOF
@@ -83,7 +84,9 @@ _write_env_all() {
 MSSQL_SA_PASSWORD=${pass}
 MSSQL_DB=QualityDMS
 
-# ── PostgreSQL ──────────────────────────────────────────
+# ── PostgreSQL (cross-stack: fastapi/documents_sync -> dms_postgres) ─
+POSTGRES_HOST=dms_postgres
+POSTGRES_PORT=5432
 POSTGRES_DB=PublicDMS
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=${pass}
@@ -92,12 +95,12 @@ POSTGRES_PASSWORD=${pass}
 MONGO_USER=mongoadmin
 MONGO_PASSWORD=${pass}
 
-# ── FastAPI ─────────────────────────────────────────────
+# ── Secretos compartidos ────────────────────────────────
 FASTAPI_API_KEY=${api_key}
-FASTAPI_URL=http://fastapi:8000
-
-# ── JWT / Internal ──────────────────────────────────────
 JWT_SECRET=${jwt}
+
+# ── URLs cross-stack (container names sobre dms_backbone) ─
+FASTAPI_URL=http://dms_fastapi:8000
 
 # ── Seed mode: sandbox | dev | none ─────────────────────
 DMS_SEED_MODE=${SEED_MODE:-dev}
@@ -190,30 +193,9 @@ generate_env() {
     sleep 0.4
     spinner_stop
 
-    case "${STACK:-all}" in
-        net)
-            _write_env_net "$MASTER_PASSWORD" "$fastapi_key" "$jwt_secret"
-            log_ok ".env.net generated  ${GRAY}(Stack: .NET + SQL Server)${RESET}"
-            ;;
-        php)
-            _write_env_php "$MASTER_PASSWORD" "$fastapi_key"
-            log_ok ".env.php generated  ${GRAY}(Stack: PHP + PostgreSQL + Nginx)${RESET}"
-            ;;
-        indexer)
-            _write_env_indexer "$MASTER_PASSWORD" "$fastapi_key" "$jwt_secret"
-            log_ok ".env.indexer generated  ${GRAY}(Stack: FastAPI + MongoDB)${RESET}"
-            ;;
-        all|*)
-            _write_env_all     "$MASTER_PASSWORD" "$fastapi_key" "$jwt_secret"
-            _write_env_net     "$MASTER_PASSWORD" "$fastapi_key" "$jwt_secret"
-            _write_env_php     "$MASTER_PASSWORD" "$fastapi_key"
-            _write_env_indexer "$MASTER_PASSWORD" "$fastapi_key" "$jwt_secret"
-            log_ok ".env generated          ${GRAY}(compose-all.yml)${RESET}"
-            log_ok ".env.net generated      ${GRAY}(Stack: .NET + SQL Server)${RESET}"
-            log_ok ".env.php generated      ${GRAY}(Stack: PHP + PostgreSQL + Nginx)${RESET}"
-            log_ok ".env.indexer generated  ${GRAY}(Stack: FastAPI + MongoDB)${RESET}"
-            ;;
-    esac
+    # .env raiz unico — lo comparten los 3 stacks (--env-file .env).
+    _write_env_all "$MASTER_PASSWORD" "$fastapi_key" "$jwt_secret"
+    log_ok ".env generated  ${GRAY}(compartido por los 3 stacks)${RESET}"
 
     log_ok "FastAPI API key  ${GRAY}(256-bit random)${RESET}"
     log_ok "JWT secret       ${GRAY}(384-bit base64)${RESET}"
@@ -225,14 +207,8 @@ generate_env() {
 handle_existing_env() {
     [ "${SKIP_ENV:-false}" = true ] && { log_info "Using existing .env (--skip-env)"; return 0; }
 
-    # Determine which env file(s) to check
-    local env_files=()
-    case "${STACK:-all}" in
-        net)     env_files=(".env.net") ;;
-        php)     env_files=(".env.php") ;;
-        indexer) env_files=(".env.indexer") ;;
-        all|*)   env_files=(".env" ".env.net" ".env.php" ".env.indexer") ;;
-    esac
+    # Modelo de .env unico compartido por los 3 stacks.
+    local env_files=(".env")
 
     local any_exists=false
     for f in "${env_files[@]}"; do
