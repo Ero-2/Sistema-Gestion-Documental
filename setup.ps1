@@ -6,6 +6,13 @@
 #  Solo PHP + PostgreSQL:   .\setup.ps1 -Stack php
 #  Solo FastAPI + Mongo+Nginx: .\setup.ps1 -Stack fastapi
 #
+#  Gestion de servicios (no interactivos):
+#    .\setup.ps1 up         encender contenedores (start/up)
+#    .\setup.ps1 down       apagar contenedores (stop -- los conserva)
+#    .\setup.ps1 restart    reiniciar contenedores
+#    .\setup.ps1 reinstall  rebuild imagenes + recrea (conserva datos)
+#       (todos o -Stack dotnet|php|fastapi)
+#
 #  Subcomandos de diagnostico (no interactivos):
 #    .\setup.ps1 status     estado de contenedores
 #    .\setup.ps1 ports      puertos del sistema
@@ -30,6 +37,13 @@ switch ($Command.ToLower()) {
     "ports"    { $Subcommand = "ports" }
     "logs"     { $Subcommand = "logs" }
     "validate" { $Subcommand = "validate" }
+    "up"        { $Subcommand = "up" }
+    "start"     { $Subcommand = "up" }
+    "down"      { $Subcommand = "down" }
+    "stop"      { $Subcommand = "down" }
+    "restart"   { $Subcommand = "restart" }
+    "reinstall" { $Subcommand = "reinstall" }
+    "rebuild"   { $Subcommand = "reinstall" }
     "all"      { }                                  # default: instalacion
     default    { $Stack = $Command }                # trata el posicional como stack
 }
@@ -430,6 +444,36 @@ if ($Subcommand) {
             Test-Storage
             Test-SearchEngine
         }
+        "up" {
+            $composeCmd = Get-ComposeCmd
+            if (-not $composeCmd) { Write-Err "Docker Compose no encontrado."; exit 1 }
+            Write-Step "Levantando servicios [stack: $Stack]..."
+            Initialize-SharedInfra
+            Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "up -d"
+            Write-Ok "Servicios levantados."
+            Show-ContainerStatus
+        }
+        "down" {
+            $composeCmd = Get-ComposeCmd
+            if (-not $composeCmd) { Write-Err "Docker Compose no encontrado."; exit 1 }
+            Write-Step "Apagando servicios [stack: $Stack]..."
+            Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "stop"
+            Write-Ok "Servicios apagados. (Contenedores conservados; usa '.\setup.ps1 up' para encender.)"
+        }
+        "restart" {
+            $composeCmd = Get-ComposeCmd
+            if (-not $composeCmd) { Write-Err "Docker Compose no encontrado."; exit 1 }
+            Restart-Services -composeCmd $composeCmd -stackSel $Stack
+        }
+        "reinstall" {
+            $composeCmd = Get-ComposeCmd
+            if (-not $composeCmd) { Write-Err "Docker Compose no encontrado."; exit 1 }
+            Write-Step "Reinstalando (rebuild imagenes + recrea contenedores, conserva datos) [stack: $Stack]..."
+            Initialize-SharedInfra
+            Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "up -d --build --force-recreate"
+            Write-Ok "Reinstalacion completa."
+            Show-ContainerStatus
+        }
     }
     exit 0
 }
@@ -469,59 +513,112 @@ $existingContainers = docker ps -a --filter "name=dms_" --format "{{.Names}}" 2>
 $systemExists = ($existingContainers | Measure-Object).Count -gt 0
 
 if ($systemExists) {
-    Write-Host ""
-    Write-Sep '═'
-    Write-Host "  SISTEMA YA INICIALIZADO" -ForegroundColor Yellow
-    Write-Sep '═'
-    Write-Host ""
-    Write-Host "  Se encontraron contenedores DMS existentes:" -ForegroundColor White
-    $existingContainers | ForEach-Object {
-        $st = docker inspect --format="{{.State.Status}}" $_ 2>$null
-        $color = if ($st -eq "running") { "Green" } else { "Red" }
-        Write-Host ("    {0,-28} [{1}]" -f $_, $st) -ForegroundColor $color
-    }
-    Write-Host ""
-    Write-Host "  Que deseas hacer?" -ForegroundColor Cyan
-    Write-Host "  [R]  Reutilizar (solo restart, conserva datos)" -ForegroundColor White
-    Write-Host "  [L]  Reinicializar limpio (elimina volumenes, rebuilds)"  -ForegroundColor White
-    Write-Host "  [D]  Ir al menu de diagnostico" -ForegroundColor White
-    Write-Host "  [S]  Salir" -ForegroundColor DarkGray
-    Write-Host ""
+    $leaveMenu = $false
+    do {
+        # Re-leer estado real en cada vuelta (down elimina contenedores).
+        $existingContainers = @(docker ps -a --filter "name=dms_" --format "{{.Names}}" 2>$null)
+        $runningContainers  = @(docker ps    --filter "name=dms_" --format "{{.Names}}" 2>$null)
+        $nExist = $existingContainers.Count
+        $nRun   = $runningContainers.Count
+        $allUp      = ($nExist -gt 0 -and $nRun -eq $nExist)
+        $allStopped = ($nExist -gt 0 -and $nRun -eq 0)
+        $none       = ($nExist -eq 0)
 
-    $choice = ""
-    do { $choice = (Read-Host "  Opcion [R/L/D/S]").ToUpper() } while ($choice -notin @("R","L","D","S"))
-
-    switch ($choice) {
-        "S" { Write-Info "Saliendo."; exit 0 }
-        "D" {
-            Show-DiagnosticMenu -composeCmd $composeCmd -stackSel $Stack
-            exit 0
-        }
-        "R" {
-            Write-Step "Reiniciando servicios existentes..."
-            Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "restart" 2>&1 | Out-Null
-            Write-Ok "Servicios reiniciados."
-            Write-Host ""
-            # Mostrar dashboard y salir
-            $skip = $true
-        }
-        "L" {
-            Write-Host ""
-            Write-Warn "ADVERTENCIA: Se eliminaran los volumenes de datos de los stacks."
-            Write-Warn "SQL Server, PostgreSQL y MongoDB perderan sus datos."
-            Write-Warn "El volumen externo 'documentos' NO se elimina (compartido)."
-            Write-Host ""
-            $confirm = Read-Host "  Escribe CONFIRMAR para continuar"
-            if ($confirm -ne "CONFIRMAR") {
-                Write-Info "Cancelado."; exit 0
+        Write-Host ""
+        Write-Sep '═'
+        Write-Host "  GESTION DEL SISTEMA" -ForegroundColor Yellow
+        Write-Sep '═'
+        Write-Host ""
+        if ($none) {
+            Write-Host "  No hay contenedores DMS (sin instalar o eliminados)." -ForegroundColor DarkGray
+        } else {
+            Write-Host "  Contenedores DMS  (encendidos: $nRun / $nExist):" -ForegroundColor White
+            $existingContainers | ForEach-Object {
+                $st = docker inspect --format="{{.State.Status}}" $_ 2>$null
+                $color = if ($st -eq "running") { "Green" } else { "Red" }
+                Write-Host ("    {0,-28} [{1}]" -f $_, $st) -ForegroundColor $color
             }
-            Write-Step "Eliminando contenedores y volumenes..."
-            Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "down -v" 2>&1 | Out-Null
-            Write-Ok "Limpieza completa. Procediendo con instalacion limpia..."
-            $systemExists = $false
-            $skip = $false
         }
-    }
+        Write-Host ""
+        Write-Host "  Que deseas hacer?  [stack: $Stack]" -ForegroundColor Cyan
+        Write-Host "  [U]  Encender (up -- arranca contenedores)" -ForegroundColor White
+        Write-Host "  [P]  Apagar (stop -- detiene, conserva contenedores y datos)" -ForegroundColor White
+        Write-Host "  [R]  Reiniciar (restart)" -ForegroundColor White
+        Write-Host "  [I]  Reinstalar (rebuild + recrea, conserva datos)" -ForegroundColor White
+        Write-Host "  [L]  Reinicializar limpio (elimina volumenes, rebuild)"  -ForegroundColor White
+        Write-Host "  [D]  Menu de diagnostico" -ForegroundColor White
+        Write-Host "  [S]  Salir" -ForegroundColor DarkGray
+        Write-Host ""
+
+        $choice = ""
+        do { $choice = (Read-Host "  Opcion [U/P/R/I/L/D/S]").ToUpper() } while ($choice -notin @("U","P","R","I","L","D","S"))
+
+        switch ($choice) {
+            "S" { Write-Info "Saliendo."; exit 0 }
+            "D" {
+                Show-DiagnosticMenu -composeCmd $composeCmd -stackSel $Stack
+                # vuelve al menu de gestion
+            }
+            "U" {
+                if ($allUp) {
+                    Write-Warn "Los contenedores ya estan encendidos. Nada que arrancar."
+                } else {
+                    Write-Step "Encendiendo servicios..."
+                    Initialize-SharedInfra
+                    Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "up -d"
+                    Write-Ok "Servicios encendidos."
+                    Write-Host ""
+                    Show-ContainerStatus
+                }
+            }
+            "P" {
+                if ($none) {
+                    Write-Warn "No hay contenedores. Nada que apagar."
+                } elseif ($allStopped) {
+                    Write-Warn "Los contenedores ya estan apagados. Nada que apagar."
+                } else {
+                    Write-Step "Apagando servicios..."
+                    Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "stop"
+                    Write-Ok "Servicios apagados. (Contenedores y datos conservados.)"
+                }
+            }
+            "R" {
+                if ($nRun -eq 0) {
+                    Write-Warn "No hay contenedores encendidos. Usa [U] para arrancarlos primero."
+                } else {
+                    Write-Step "Reiniciando servicios..."
+                    Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "restart"
+                    Write-Ok "Servicios reiniciados."
+                }
+            }
+            "I" {
+                Write-Step "Reinstalando (rebuild imagenes + recrea contenedores, conserva datos)..."
+                Initialize-SharedInfra
+                Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "up -d --build --force-recreate"
+                Write-Ok "Reinstalacion completa."
+                Write-Host ""
+                Show-ContainerStatus
+            }
+            "L" {
+                Write-Host ""
+                Write-Warn "ADVERTENCIA: Se eliminaran los volumenes de datos de los stacks."
+                Write-Warn "SQL Server, PostgreSQL y MongoDB perderan sus datos."
+                Write-Warn "El volumen externo 'documentos' NO se elimina (compartido)."
+                Write-Host ""
+                $confirm = Read-Host "  Escribe CONFIRMAR para continuar"
+                if ($confirm -ne "CONFIRMAR") {
+                    Write-Info "Cancelado."
+                } else {
+                    Write-Step "Eliminando contenedores y volumenes..."
+                    Invoke-StackCompose -composeCmd $composeCmd -stackSel $Stack -action "down -v" 2>&1 | Out-Null
+                    Write-Ok "Limpieza completa. Procediendo con instalacion limpia..."
+                    $systemExists = $false
+                    $skip = $false
+                    $leaveMenu = $true   # cae al flujo de instalacion
+                }
+            }
+        }
+    } while (-not $leaveMenu)
 }
 
 # ── Validacion de puertos ─────────────────────────────────────────────────────
@@ -881,11 +978,14 @@ Write-Host ""
 Write-Sep '─'
 Write-Host "  COMANDOS UTILES" -ForegroundColor Cyan
 Write-Sep '─'
+Write-Host "  Encender:    .\setup.ps1 up        (todos / -Stack <s>)" -ForegroundColor DarkGray
+Write-Host "  Apagar:      .\setup.ps1 down      (stop, conserva contenedores)" -ForegroundColor DarkGray
+Write-Host "  Reiniciar:   .\setup.ps1 restart   (todos / -Stack <s>)" -ForegroundColor DarkGray
+Write-Host "  Reinstalar:  .\setup.ps1 reinstall (rebuild, conserva datos)" -ForegroundColor DarkGray
 Write-Host "  Estado:      .\setup.ps1 status"                        -ForegroundColor DarkGray
 Write-Host "  Puertos:     .\setup.ps1 ports"                         -ForegroundColor DarkGray
 Write-Host "  Logs:        .\setup.ps1 logs"                          -ForegroundColor DarkGray
 Write-Host "  Validar:     .\setup.ps1 validate"                      -ForegroundColor DarkGray
-Write-Host "  Detener:     docker compose -p dms-fastapi -f docker-compose.fastapi.yml down" -ForegroundColor DarkGray
 Write-Host "  Diagnostico: .\setup.ps1 -Diagnose"                     -ForegroundColor DarkGray
 Write-Host ""
 Write-Sep '═'
